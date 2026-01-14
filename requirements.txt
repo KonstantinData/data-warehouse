@@ -1,0 +1,23 @@
+# DATA PROCESSING & ETL
+pandas>=2.0.3                  # Data manipulation & CSV I/O
+PyYAML>=6.0                    # Read/Write YAML metadata
+Jinja2>=3.0                    # HTML report templating
+
+# CONFIGURATION
+python-dotenv>=1.0.0           # Loads .env for config values
+
+# OPTIONAL (ML / downstream, keep if needed)
+torch>=2.1.0                   # PyTorch core (if ML used later)
+torchvision>=0.15.2            # Image datasets support
+scikit-learn>=1.3.0            # Clustering, segmentation
+
+# TESTING & QUALITY
+pytest>=7.4.2                  # Test runner
+pytest-mock>=3.15.1            # Mocking for tests
+
+# DEVELOPMENT / LINTING (Optional)
+black>=24.3.0                  # Code formatter
+flake8>=6.1.0                  # Style checks
+
+# EXCLUDE (deferred until needed)
+# PyMySQL, SQLAlchemy, Tableau libs are no longer required for pure Python ELT

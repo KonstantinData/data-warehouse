@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -155,6 +156,11 @@ def read_state(path: str) -> Dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Load CRM/ERP raw CSVs into bronze layer.")
+    parser.add_argument(
+        "--run-id",
+        default=os.environ.get("BRONZE_RUN_ID") or os.environ.get("RUN_ID"),
+        help="Optional run identifier (defaults to BRONZE_RUN_ID or RUN_ID env vars).",
+    )
     parser.add_argument("--raw-crm", default=DEFAULT_RAW_CRM, help="Path to CRM raw source directory.")
     parser.add_argument("--raw-erp", default=DEFAULT_RAW_ERP, help="Path to ERP raw source directory.")
     parser.add_argument("--bronze-root", default=DEFAULT_BRONZE_ROOT, help="Root path for bronze artifacts.")
@@ -211,7 +217,7 @@ def main() -> None:
     state_path = os.path.join(state_dir, "last_ingested.yaml")
 
     start_dt = utc_now()
-    run_id = f"{start_dt.strftime('%Y%m%d_%H%M%S')}_#{str(uuid.uuid4())[:8]}"
+    run_id = args.run_id or f"{start_dt.strftime('%Y%m%d_%H%M%S')}_#{str(uuid.uuid4())[:8]}"
 
     elt_dir = os.path.join(bronze_root, run_id)
     data_dir = os.path.join(elt_dir, "data")
@@ -302,7 +308,12 @@ def main() -> None:
             rec["sha256"] = sha256_file(src_path)
 
             prev_state = state_files.get(src_path)
-            if prev_state and prev_state.get("file_mtime_utc") == rec["file_mtime_utc"] and prev_state.get("sha256") == rec["sha256"]:
+            is_changed = not prev_state or (
+                prev_state.get("file_mtime_utc") != rec["file_mtime_utc"]
+                or prev_state.get("sha256") != rec["sha256"]
+            )
+            rec["is_changed"] = is_changed
+            if not is_changed:
                 rec["status"] = "SKIPPED"
                 rec["skip_reason"] = "unchanged"
                 log(f"SKIPPED file={filename} source={source_system} reason=unchanged")
@@ -330,6 +341,7 @@ def main() -> None:
         except Exception as e:
             rec["error_type"] = type(e).__name__
             rec["error_message"] = str(e)
+            rec["is_changed"] = True
             log(f"ERROR file={filename} source={source_system} {rec['error_type']}: {rec['error_message']}")
             log(traceback.format_exc())
         else:
@@ -357,6 +369,7 @@ def main() -> None:
             "sha256": rec["sha256"],
             "error_type": rec["error_type"],
             "error_message": rec["error_message"],
+            "is_changed": rec.get("is_changed"),
         }
 
         results.append(rec)
@@ -380,11 +393,17 @@ def main() -> None:
     metadata["run"]["ended_utc"] = iso_utc(end_dt)
     metadata["run"]["duration_s"] = (end_dt - start_dt).total_seconds()
 
+    has_new_data = any(
+        r.get("is_changed") and r["status"] == "SUCCESS"
+        for r in results
+    )
+
     metadata["summary"] = {
         "files_total": len(results),
         "files_success": ok,
         "files_skipped": skipped,
         "files_failed": failed,
+        "has_new_data": has_new_data,
     }
 
     # Write metadata.yaml
@@ -407,6 +426,16 @@ def main() -> None:
         write_yaml(state_payload, state_path)
 
     log(f"RUN_END run_id={run_id} duration_s={metadata['run']['duration_s']:.3f} success={ok} failed={failed}")
+    output_payload = {
+        "run_id": run_id,
+        "artifacts_dir": elt_dir,
+        "has_new_data": has_new_data,
+        "files_total": len(results),
+        "files_success": ok,
+        "files_skipped": skipped,
+        "files_failed": failed,
+    }
+    print(json.dumps(output_payload))
 
 
 if __name__ == "__main__":

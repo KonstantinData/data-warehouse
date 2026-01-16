@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from runs.load_summary_report import write_summary_report
 
@@ -31,6 +31,16 @@ import yaml
 from dotenv import dotenv_values, load_dotenv
 
 RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[0-9a-fA-F]{6,32})$")
+SENSITIVE_ENV_KEYS = (
+    "OPENAI_API_KEY",
+    "OPEN_AI_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "GCP_SECRET",
+    "AZURE_CLIENT_SECRET",
+)
+SKIP_LLMS_STEPS = ("silver draft", "silver builder", "gold draft", "gold builder")
+SILVER_STEPS = ("silver draft", "silver builder", "silver runner")
+GOLD_STEPS = ("gold draft", "gold builder", "gold runner")
 
 
 @dataclass
@@ -110,12 +120,52 @@ def read_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+def redact_sensitive_values(text: str, env: Dict[str, str]) -> str:
+    redacted = text
+    for key in SENSITIVE_ENV_KEYS:
+        value = env.get(key)
+        if value:
+            redacted = redacted.replace(value, "***REDACTED***")
+    return redacted
+
+
+def build_python_cmd(repo_root: Path, relative_path: Path, run_id: Optional[str] = None) -> List[str]:
+    cmd = [sys.executable, str(repo_root / relative_path)]
+    if run_id:
+        cmd.append(run_id)
+    return cmd
+
+
+def make_skipped_step(name: str, reason: str) -> StepResult:
+    now = utc_now()
+    return StepResult(
+        name=name,
+        status="skipped",
+        started_utc=iso_utc(now),
+        ended_utc=iso_utc(now),
+        duration_s=0.0,
+        details=reason,
+    )
+
+
+def append_skipped_steps(
+    step_results: List[StepResult],
+    step_names: Iterable[str],
+    reason: str,
+) -> None:
+    for step_name in step_names:
+        step_results.append(make_skipped_step(step_name, reason))
+
+
 def run_subprocess_step(
     name: str,
     cmd: List[str],
     env: Dict[str, str],
     cwd: Path,
     log_dir: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    timeout_s: Optional[float] = None,
 ) -> StepResult:
     log_path = log_dir / f"{name.replace(' ', '_').lower()}.log"
     started = utc_now()
@@ -125,13 +175,14 @@ def run_subprocess_step(
     details = None
     try:
         with log_path.open("w", encoding="utf-8") as log_file:
-            result = subprocess.run(
+            result = runner(
                 cmd,
                 cwd=cwd,
                 env=env,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 text=True,
+                timeout=timeout_s,
             )
         return_code = result.returncode
         if result.returncode != 0:
@@ -140,7 +191,7 @@ def run_subprocess_step(
                 f" (see {log_path})"
     except Exception as exc:
         status = "failed"
-        details = f"Execution failed: {exc}"
+        details = redact_sensitive_values(f"Execution failed: {exc}", env)
     ended = utc_now()
     return StepResult(
         name=name,
@@ -200,14 +251,18 @@ def detect_no_new_data(bronze_metadata: Dict[str, Any]) -> bool:
     return files_total > 0 and files_success == 0 and files_failed == 0
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run end-to-end ELT orchestration.")
     parser.add_argument(
         "--skip-llm",
         action="store_true",
         help="Skip LLM-driven draft/builder steps.",
     )
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
 
 
 def main() -> int:
@@ -234,7 +289,7 @@ def main() -> int:
     no_new_data = False
     should_stop = False
 
-    bronze_cmd = [sys.executable, str(repo_root / "src" / "runs" / "load_1_bronze_layer.py")]
+    bronze_cmd = build_python_cmd(repo_root, Path("src/runs/load_1_bronze_layer.py"))
     bronze_result = run_subprocess_step(
         name="bronze",
         cmd=bronze_cmd,
@@ -253,66 +308,33 @@ def main() -> int:
         no_new_data = detect_no_new_data(bronze_metadata)
 
     if no_new_data:
-        for step_name in [
-            "silver draft",
-            "silver builder",
-            "silver runner",
-            "gold draft",
-            "gold builder",
-            "gold runner",
-        ]:
-            step_results.append(
-                StepResult(
-                    name=step_name,
-                    status="skipped",
-                    started_utc=iso_utc(utc_now()),
-                    ended_utc=iso_utc(utc_now()),
-                    duration_s=0.0,
-                    details="Skipped due to no new data.",
-                )
-            )
+        append_skipped_steps(
+            step_results,
+            SILVER_STEPS + GOLD_STEPS,
+            "Skipped due to no new data.",
+        )
     else:
         if should_stop:
-            for step_name in [
-                "silver draft",
-                "silver builder",
-                "silver runner",
-                "gold draft",
-                "gold builder",
-                "gold runner",
-            ]:
-                step_results.append(
-                    StepResult(
-                        name=step_name,
-                        status="skipped",
-                        started_utc=iso_utc(utc_now()),
-                        ended_utc=iso_utc(utc_now()),
-                        duration_s=0.0,
-                        details="Skipped due to prior failure.",
-                    )
-                )
+            append_skipped_steps(
+                step_results,
+                SILVER_STEPS + GOLD_STEPS,
+                "Skipped due to prior failure.",
+            )
         else:
             if args.skip_llm:
-                for step_name in ["silver draft", "silver builder", "gold draft", "gold builder"]:
-                    step_results.append(
-                        StepResult(
-                            name=step_name,
-                            status="skipped",
-                            started_utc=iso_utc(utc_now()),
-                            ended_utc=iso_utc(utc_now()),
-                            duration_s=0.0,
-                            details="Skipped via --skip-llm.",
-                        )
-                    )
+                append_skipped_steps(
+                    step_results,
+                    SKIP_LLMS_STEPS,
+                    "Skipped via --skip-llm.",
+                )
             else:
                 step_results.append(run_silver_draft_step(repo_root, log_dir))
 
-                silver_builder_cmd = [
-                    sys.executable,
-                    str(repo_root / "src" / "agents" / "load_2_silver_layer_builder_agent.py"),
-                ]
-                if bronze_run_id:
-                    silver_builder_cmd.append(bronze_run_id)
+                silver_builder_cmd = build_python_cmd(
+                    repo_root,
+                    Path("src/agents/load_2_silver_layer_builder_agent.py"),
+                    bronze_run_id,
+                )
                 step_results.append(
                     run_subprocess_step(
                         name="silver builder",
@@ -323,12 +345,11 @@ def main() -> int:
                     )
                 )
 
-            silver_runner_cmd = [
-                sys.executable,
-                str(repo_root / "src" / "runs" / "load_2_silver_layer.py"),
-            ]
-            if bronze_run_id:
-                silver_runner_cmd.append(bronze_run_id)
+            silver_runner_cmd = build_python_cmd(
+                repo_root,
+                Path("src/runs/load_2_silver_layer.py"),
+                bronze_run_id,
+            )
             silver_runner_result = run_subprocess_step(
                 name="silver runner",
                 cmd=silver_runner_cmd,
@@ -344,37 +365,24 @@ def main() -> int:
                 should_stop = True
 
             if should_stop:
-                for step_name in ["gold draft", "gold builder", "gold runner"]:
-                    step_results.append(
-                        StepResult(
-                            name=step_name,
-                            status="skipped",
-                            started_utc=iso_utc(utc_now()),
-                            ended_utc=iso_utc(utc_now()),
-                            duration_s=0.0,
-                            details="Skipped due to prior failure.",
-                        )
-                    )
+                append_skipped_steps(
+                    step_results,
+                    GOLD_STEPS,
+                    "Skipped due to prior failure.",
+                )
             else:
                 if args.skip_llm:
-                    for step_name in ["gold draft", "gold builder"]:
-                        step_results.append(
-                            StepResult(
-                                name=step_name,
-                                status="skipped",
-                                started_utc=iso_utc(utc_now()),
-                                ended_utc=iso_utc(utc_now()),
-                                duration_s=0.0,
-                                details="Skipped via --skip-llm.",
-                            )
-                        )
+                    append_skipped_steps(
+                        step_results,
+                        ("gold draft", "gold builder"),
+                        "Skipped via --skip-llm.",
+                    )
                 else:
-                    gold_draft_cmd = [
-                        sys.executable,
-                        str(repo_root / "src" / "agents" / "load_3_gold_layer_draft_agent.py"),
-                    ]
-                    if silver_run_id:
-                        gold_draft_cmd.append(silver_run_id)
+                    gold_draft_cmd = build_python_cmd(
+                        repo_root,
+                        Path("src/agents/load_3_gold_layer_draft_agent.py"),
+                        silver_run_id,
+                    )
                     step_results.append(
                         run_subprocess_step(
                             name="gold draft",
@@ -385,12 +393,11 @@ def main() -> int:
                         )
                     )
 
-                    gold_builder_cmd = [
-                        sys.executable,
-                        str(repo_root / "src" / "agents" / "load_3_gold_layer_builder_agent.py"),
-                    ]
-                    if silver_run_id:
-                        gold_builder_cmd.append(silver_run_id)
+                    gold_builder_cmd = build_python_cmd(
+                        repo_root,
+                        Path("src/agents/load_3_gold_layer_builder_agent.py"),
+                        silver_run_id,
+                    )
                     builder_env = env.copy()
                     builder_env["SKIP_RUNNER_EXECUTION"] = "1"
                     step_results.append(
@@ -403,12 +410,11 @@ def main() -> int:
                         )
                     )
 
-                gold_runner_cmd = [
-                    sys.executable,
-                    str(repo_root / "src" / "runs" / "load_3_gold_layer.py"),
-                ]
-                if silver_run_id:
-                    gold_runner_cmd.append(silver_run_id)
+                gold_runner_cmd = build_python_cmd(
+                    repo_root,
+                    Path("src/runs/load_3_gold_layer.py"),
+                    silver_run_id,
+                )
                 gold_runner_result = run_subprocess_step(
                     name="gold runner",
                     cmd=gold_runner_cmd,

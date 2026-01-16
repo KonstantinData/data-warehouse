@@ -2,7 +2,7 @@
 
 # Data Warehouse Project (Python ELT-First)
 
-A fully completed, portfolio-ready **Python-driven Data Warehouse** demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices using raw CSV sources and ELT workflows. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+A fully completed, portfolio-ready **Python-driven Data Warehouse** demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices using raw CSV sources and ELT workflows. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -37,7 +37,7 @@ This repository implements a **local, Python-first Data Warehouse pipeline** tha
 * Transforms and stores data in a reproducible **Bronze ELT layer**
 * Provides outputs for BI, analytics, and downstream ML workflows
 
-The approach is intentionally engine-agnostic at the Bronze level — no SQL engine or external database is required to generate staging artifacts. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+The approach is intentionally engine-agnostic at the Bronze level — no SQL engine or external database is required to generate staging artifacts. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -57,7 +57,7 @@ Gold Layer (business-ready aggregates)
 Consume (BI, reporting, ML)
 ```
 
-*Bronze layer generation is implemented in Python and snapshots raw data for reproducibility.* ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+*Bronze layer generation is implemented in Python and snapshots raw data for reproducibility.* ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -70,7 +70,7 @@ Consume (BI, reporting, ML)
 * Reusable artifacts for analytics and machine learning
 * Modular structure enabling Silver/Gold layer extension
 * Test placeholders and pytest integration
-* Comprehensive documentation and configuration templates ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+* Comprehensive documentation and configuration templates ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -84,8 +84,8 @@ Consume (BI, reporting, ML)
 ### Setup & Installation
 
 ```bash
-git clone https://github.com/KonstantinData/data-warehouse.git
-cd data-warehouse
+git clone https://github.com/KonstantinData/agentic-elt-data-warehouse.git
+cd agentic-elt-data-warehouse
 python -m venv .venv
 source .venv/bin/activate     # macOS / Linux
 .venv\Scripts\activate         # Windows
@@ -102,14 +102,14 @@ raw/
 └── source_erp/
 ```
 
-Ensure environment variables or config templates in `configs/` are set according to your environment. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+Ensure environment variables or config templates in `configs/` are set according to your environment. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
 ## 5. Folder Structure
 
 ```
-data-warehouse/
+agentic-elt-data-warehouse/
 ├── analytics/         # BI artifacts & definitions
 ├── artifacts/         # Built outputs & snapshots
 │   ├── bronze/
@@ -129,7 +129,7 @@ data-warehouse/
 └── LICENSE
 ```
 
-This modular design encourages extensibility across layers. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+This modular design encourages extensibility across layers. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -153,7 +153,7 @@ Each snapshot contains:
 * Raw file copies (`data/*.csv`)
 * Metadata (`metadata.yaml`)
 * ELT logs (`run_log.txt`)
-* A human-readable HTML run summary ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+* A human-readable HTML run summary ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -173,7 +173,7 @@ Outputs provide:
 
 * Auditable lineage metadata
 * Snapshot results for analytics
-* Standardized staging data ready for Silver layer processing ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+* Standardized staging data ready for Silver layer processing ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -187,7 +187,7 @@ HTML reports and YAML metadata files capture:
 * Schema breakdowns
 * Row count summaries
 
-These artifacts support data auditing and reproducibility. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+These artifacts support data auditing and reproducibility. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -199,7 +199,7 @@ Tests are located in the `tests/` directory and can be executed with:
 pytest
 ```
 
-Add tests corresponding to new modules to maintain quality. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+Add tests corresponding to new modules to maintain quality. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -212,7 +212,7 @@ Dependencies are managed via `requirements.txt` and include:
 * `python-dotenv>=1.0.0`
 * `Jinja2>=3.0`
 
-Refer to `pyproject.toml` for development metadata. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+Refer to `pyproject.toml` for development metadata. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
@@ -225,10 +225,10 @@ To contribute:
 3. Add tests and code
 4. Open a Pull Request
 
-Follow the code style and include tests for new functionality. ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+Follow the code style and include tests for new functionality. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
 
 ---
 
 ## 12. License
 
-This project is licensed under the  **MIT License** . ([GitHub](https://github.com/KonstantinData/data-warehouse "GitHub - KonstantinData/data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+This project is licensed under the  **MIT License** . ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Iterable, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.agents.llm_utils import build_openai_client, call_openai
 from src.agents.agent_types import AgentRequest, AgentResult

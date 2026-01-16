@@ -1,87 +1,147 @@
+# Agentic ELT Data Warehouse
 
+**Value proposition:** A local, run-based ELT system that transforms raw CRM/ERP CSV inputs into Medallion-layer artifacts for data engineers and reviewers who need reproducible, auditable pipeline outputs and lineage metadata.
 
-# Data Warehouse Project (Python ELT-First)
+**Non-goals / out of scope:**
 
-A fully completed, portfolio-ready **Python-driven Data Warehouse** demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices using raw CSV sources and ELT workflows. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
-
----
-
-## Table of Contents
-
-1. Project Overview
-2. Architecture & Design
-3. Features
-4. Getting Started
-   * Prerequisites
-   * Setup & Installation
-   * Configuration
-5. Folder Structure
-6. ELT Process
-   * Bronze Layer
-   * Silver Layer
-   * Gold Layer
-7. Artifacts & Outputs
-8. Reporting & Metadata
-9. Testing
-10. Dependencies
-11. Contributing
-12. License
+- Production orchestration, scheduling, or deployment infrastructure
+- Cloud storage integrations or external databases
+- Streaming ingestion or real-time processing
+- Enterprise-grade security controls beyond local environment hygiene
 
 ---
 
 ## 1. Project Overview
 
-This repository implements a **local, Python-first Data Warehouse pipeline** that:
+**What this system does (end-to-end):**
 
-* Ingests raw CSV source files (CRM + ERP)
-* Transforms and stores data in a reproducible **Bronze ELT layer**
-* Provides outputs for BI, analytics, and downstream ML workflows
+- Ingests raw CSV sources from `raw/source_crm` and `raw/source_erp` into Bronze snapshots.
+- Applies deterministic cleansing/standardization into Silver outputs.
+- Builds Gold marts and aggregates from Silver outputs.
+- Emits run metadata and HTML reports for each layer, plus a cross-step summary report.
 
-The approach is intentionally engine-agnostic at the Bronze level — no SQL engine or external database is required to generate staging artifacts. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+**Design intent:**
+
+- Demonstrate a complete, run-based Medallion pipeline on local filesystem artifacts.
+- Provide an auditable footprint (metadata, logs, reports) for each run.
+- Support agent-driven drafting/building steps while keeping runnable scripts as the system of record.
+
+**Target personas:**
+
+- Data Engineer (implementation and extension)
+- Reviewer/Architect (assessment of pipeline design and governance)
+- Maintainer (operational ownership and iteration)
+
+**Status and intended usage:**
+
+- **Status:** In progress; functional runners exist, coverage and CI are not finalized.
+- **Intended usage:** Local execution and portfolio review; not production-hardened.
 
 ---
 
-## 2. Architecture & Design
+## 2. System Architecture
 
-The architecture follows a **Medallion pattern** with an ELT pipeline:
+**High-level flow:**
 
 ```
-Raw Sources (CSV)
-       ↓
-Bronze Layer (Python ELT snapshots)
-       ↓
-Silver Layer (clean & standardized)
-       ↓
-Gold Layer (business-ready aggregates)
-       ↓
-Consume (BI, reporting, ML)
+Raw CSV sources
+   → Bronze (snapshot + metadata)
+   → Silver (clean + standardized)
+   → Gold (marts + aggregates)
+   → Reports (per-layer + summary)
 ```
 
-*Bronze layer generation is implemented in Python and snapshots raw data for reproducibility.* ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+**Medallion responsibilities:**
+
+- **Bronze:** immutable snapshots with file-level metadata and checksums.
+- **Silver:** normalized, cleaned datasets with 1:1 table parity to Bronze inputs.
+- **Gold:** business-ready dimensional and aggregate outputs.
+
+**Run-based execution model:**
+
+- Each layer writes to a **run_id**-scoped directory under `artifacts/`.
+- Runs are **append-only**; re-runs produce a new run_id rather than overwriting outputs.
+- Downstream steps default to the latest available upstream run when no run_id is supplied.
+
+**Artifact lifecycle and storage locations:**
+
+- Bronze: `artifacts/bronze/<run_id>/...`
+- Silver: `artifacts/silver/<run_id>/...`
+- Gold: `artifacts/gold/marts/<run_id>/...`
+- Orchestrator logs: `artifacts/orchestrator/<run_id>/logs/...`
+- Summary report: `artifacts/reports/<run_id>/summary_report.*`
+
+**Reference diagram:** `docs/workflow_schema.jpg`
+
+For design rationale and conventions (run_id format, layering, artifacts), see the ADR index: `docs/adr/0000-adr-index.md`.
 
 ---
 
-## 3. Features
+## 3. Repository Structure
 
-* Automatic discovery and ingestion of CRM + ERP CSV sources
-* Timestamped Bronze layer snapshotting
-* Lineage metadata capture
-* ELT runner with built-in logging and reporting
-* Reusable artifacts for analytics and machine learning
-* Modular structure enabling Silver/Gold layer extension
-* Test placeholders and pytest integration
-* Comprehensive documentation and configuration templates ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+Curated view of key directories:
+
+```
+src/         # Runners, agents, and templates (system logic)
+artifacts/   # Run outputs and reports (local filesystem)
+tmp/         # Ephemeral, non-versioned analysis outputs
+
+docs/        # Architecture docs, ADRs, prompts
+
+tests/       # Unit/integration tests (expanding)
+```
+
+**Never commit:**
+
+- `.env` files or any secrets
+- `tmp/` outputs or prompt analysis artifacts
+- Generated run outputs under `artifacts/` and local raw data under `raw/`
 
 ---
 
-## 4. Getting Started
+## 4. Execution Model (Single Source of Truth)
+
+**Entry points:**
+
+- **Bronze:** `src/runs/load_1_bronze_layer.py`
+- **Silver:** `src/runs/load_2_silver_layer.py`
+- **Gold:** `src/runs/load_3_gold_layer.py`
+- **End-to-end orchestration:** `src/runs/orchestrator.py`
+
+**Canonical commands:**
+
+```bash
+python src/runs/load_1_bronze_layer.py \
+  --raw-crm raw/source_crm \
+  --raw-erp raw/source_erp \
+  --bronze-root artifacts/bronze
+
+python src/runs/load_2_silver_layer.py <bronze_run_id>
+
+python src/runs/load_3_gold_layer.py <silver_run_id> [gold_run_id]
+```
+
+**Expected behavior:**
+
+- Bronze snapshots raw files and writes `metadata.yaml`, `run_log.txt`, and `elt_report.html`.
+- Silver reads a specific Bronze run (or latest by default), applies standardization, and writes Silver outputs plus reports.
+- Gold reads a specific Silver run (or latest by default), validates required schemas, and writes marts/aggregates plus reports.
+
+**Idempotency and re-run behavior:**
+
+- Each run writes to a new run_id, ensuring immutability of previous outputs.
+- To re-run with a fixed run_id, pass it explicitly (Bronze: `--run-id`, Gold: optional argument).
+
+---
+
+## 5. Quick Start (Reproducible)
 
 ### Prerequisites
 
-* Python **3.10+**
-* `git`
+- Python **3.10+**
+- `git`
 
-### Setup & Installation
+### Environment setup
 
 ```bash
 git clone https://github.com/KonstantinData/agentic-elt-data-warehouse.git
@@ -92,143 +152,146 @@ source .venv/bin/activate     # macOS / Linux
 pip install -r requirements.txt
 ```
 
-### Configuration
-
-Place raw CSV source files under the following structure:
+### Prepare raw data
 
 ```
 raw/
-├── source_crm/
-└── source_erp/
+├── source_crm/   # CSV inputs
+└── source_erp/   # CSV inputs
 ```
 
-Ensure environment variables or config templates in `configs/` are set according to your environment. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+### Minimal end-to-end run (manual)
+
+```bash
+python src/runs/load_1_bronze_layer.py
+python src/runs/load_2_silver_layer.py
+python src/runs/load_3_gold_layer.py
+```
+
+**Expected outputs:**
+
+- Bronze: `artifacts/bronze/<run_id>/data` + `reports/elt_report.html`
+- Silver: `artifacts/silver/<run_id>/data` + `reports/elt_report.html`
+- Gold: `artifacts/gold/marts/<run_id>/data` + `reports/gold_report.html`
+
+### End-to-end orchestration (optional)
+
+The orchestrator executes Bronze → Silver → Gold and writes a summary report. It requires a `.env` file and valid LLM credentials unless `--skip-llm` is used.
+
+```bash
+python src/runs/orchestrator.py --skip-llm
+```
+
+Summary output:
+
+```
+artifacts/reports/<orchestrator_run_id>/summary_report.*
+```
 
 ---
 
-## 5. Folder Structure
+## 6. Configuration & Secrets
 
-```
-agentic-elt-data-warehouse/
-├── analytics/         # BI artifacts & definitions
-├── artifacts/         # Built outputs & snapshots
-│   ├── bronze/
-│   ├── silver/
-│   ├── gold/
-│   └── reports/
-├── configs/           # Configuration templates
-├── docs/              # Architecture & standards docs
-├── ml/                # ML experiments
-├── raw/               # Raw source CSVs
-├── scripts/           # Support scripts
-├── src/               # Python ELT implementation
-├── tests/             # Test files
-├── .gitignore
-├── requirements.txt
-├── pyproject.toml
-└── LICENSE
-```
-
-This modular design encourages extensibility across layers. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+- Configuration is managed via environment variables and a root-level `.env` file.
+- Start from `configs/.env.example` and add required keys locally (never commit `.env`).
+- The orchestrator validates the presence of `OPENAI_API_KEY` or `OPEN_AI_KEY`.
+- Layer paths can be overridden via env vars (e.g., `BRONZE_ROOT`, `SILVER_ROOT`, `GOLD_ROOT`).
 
 ---
 
-## 6. ELT Process
+## 7. Data Quality & Governance
 
-### Bronze Layer (Python ELT)
+- **Bronze:** captures file-level metadata, hashes, and run summaries.
+- **Silver:** applies standardization and lightweight normalization with row-level tracking.
+- **Gold:** validates required schemas before producing marts/aggregates.
+- **Lineage & metadata:** each layer writes `metadata.yaml` and a human-readable report.
+- **PII/GDPR:** no built-in masking; treat inputs as non-sensitive or enforce handling upstream.
 
-The Bronze layer is exclusively generated by the ELT runner in Python:
-
-* Discover raw files under `raw/source_crm` and `raw/source_erp`
-* Load CSVs as pandas DataFrames
-* Record schema, row counts, and timing metrics
-* Write structured snapshot folders under:
-
-```
-artifacts/bronze/elt/<timestamp>_<id>/
-```
-
-Each snapshot contains:
-
-* Raw file copies (`data/*.csv`)
-* Metadata (`metadata.yaml`)
-* ELT logs (`run_log.txt`)
-* A human-readable HTML run summary ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+For governance details and standards, consult the ADRs: `docs/adr/0000-adr-index.md`.
 
 ---
 
-## 7. Artifacts & Outputs
+## 8. Observability & Operations
 
-Artifacts generated from ELT runs are organized in:
-
-```
-artifacts/
-├── bronze/
-├── silver/
-├── gold/
-└── reports/
-```
-
-Outputs provide:
-
-* Auditable lineage metadata
-* Snapshot results for analytics
-* Standardized staging data ready for Silver layer processing ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+- **Logging:** `run_log.txt` per layer and orchestrator logs under `artifacts/orchestrator/`.
+- **Run tracing:** `run_id` is propagated through Bronze → Silver → Gold.
+- **Failure modes:** downstream steps are skipped if upstream fails or no new data is detected.
+- **Backfill strategy:** run layers with explicit run_id inputs to target historical snapshots.
+- **Performance/scalability:** optimized for local CSV-scale workloads; not tuned for large-scale IO.
 
 ---
 
-## 8. Reporting & Metadata
+## 9. Testing Strategy
 
-HTML reports and YAML metadata files capture:
+- **Unit tests:** core transformation logic and helpers.
+- **Integration tests:** end-to-end runs against fixture CSVs.
+- **Pipeline tests:** schema validation and artifact integrity checks.
 
-* Run start/end timestamps
-* Per‐file durations
-* Success/failure status
-* Schema breakdowns
-* Row count summaries
-
-These artifacts support data auditing and reproducibility. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
-
----
-
-## 9. Testing
-
-Tests are located in the `tests/` directory and can be executed with:
+Run tests locally:
 
 ```bash
 pytest
 ```
 
-Add tests corresponding to new modules to maintain quality. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+**Definition of Done:**
+
+- New logic is covered by tests.
+- Artifacts and metadata are updated as expected.
+- ADRs are updated if architectural behavior changes.
 
 ---
 
-## 10. Dependencies
+## 10. Architecture Decisions
 
-Dependencies are managed via `requirements.txt` and include:
-
-* `pandas>=2.0.3`
-* `PyYAML>=6.0`
-* `python-dotenv>=1.0.0`
-* `Jinja2>=3.0`
-
-Refer to `pyproject.toml` for development metadata. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+- ADR index: `docs/adr/0000-adr-index.md`
+- Add or update an ADR when changing:
+  - layer responsibilities
+  - run_id or artifact layout conventions
+  - data quality or governance rules
+  - agent/orchestrator execution flow
 
 ---
 
-## 11. Contributing
+## 11. Agentic / Prompt-Based Analysis
 
-To contribute:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests and code
-4. Open a Pull Request
-
-Follow the code style and include tests for new functionality. ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+- **Purpose:** draft plans and builders for Silver/Gold layers and code-quality evaluations.
+- **Prompts location:** `docs/prompts/` (see `docs/prompts/README.md`).
+- **Analysis outputs:** `tmp/prompt_analysis/` (non-versioned; see `tmp/prompt_analysis/README.md`).
 
 ---
 
-## 12. License
+## 12. Contribution & Review
 
-This project is licensed under the  **MIT License** . ([GitHub](https://github.com/KonstantinData/agentic-elt-data-warehouse "GitHub - KonstantinData/agentic-elt-data-warehouse: A fully completed, portfolio-ready SQL Data Warehouse demonstrating end-to-end data ingestion, transformation, modeling, governance, and documentation best practices."))
+**Review the system in this order:**
+
+1. This README
+2. ADR index (`docs/adr/0000-adr-index.md`)
+3. Runners in `src/runs/`
+4. Agents in `src/agents/`
+
+**Branching and commit expectations:**
+
+- Use short-lived feature branches.
+- Keep commits scoped and descriptive.
+- Update tests and ADRs when behavior changes.
+
+**Quality gates for PRs:**
+
+- Linting and tests pass (where applicable).
+- Documentation reflects behavior.
+- No secrets or generated artifacts are committed.
+
+---
+
+## 13. Roadmap
+
+- Align `.env.example` with orchestrator requirements.
+- Add fixture data and integration tests for all three layers.
+- Add CI pipeline for linting and tests.
+
+---
+
+## 14. License & Legal
+
+- License: MIT (`LICENSE`)
+- Data usage: raw inputs are user-provided; ensure you have rights to use any data placed under `raw/`.

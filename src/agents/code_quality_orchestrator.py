@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Iterable, Tuple
 
 from src.agents.llm_utils import build_openai_client, call_openai
-from src.agents.types import AgentRequest, AgentResult
+from src.agents.agent_types import AgentRequest, AgentResult
 
 ROLE_DESCRIPTION = """
 You are the Lead Reviewer coordinating a multi-agent senior engineering review.

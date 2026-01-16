@@ -19,7 +19,7 @@ from src.agents import code_architecture_and_operations
 from src.agents import code_quality_and_maintainability
 from src.agents import code_security_governance_compliance
 from src.agents import code_quality_orchestrator
-from src.agents.types import AgentRequest, AgentResult
+from src.agents.agent_types import AgentRequest, AgentResult
 
 DEFAULT_SYSTEM_PROMPT_CANDIDATES = (
     Path("docs/prompts/systemprompt Senior Principal Data Engineer.txt"),

@@ -1,8 +1,8 @@
 """
-load_3_gold_layer_planning_agent.py
+load_3_gold_layer_draft_agent.py
 
 Role:
-- Planning-only agent for the Gold layer.
+- Drafting-only agent for the Gold layer.
 - It does NOT generate or execute ETL code.
 - It reads the latest (or given) Silver-layer run context and metadata,
   calls a live OpenAI LLM, and produces:

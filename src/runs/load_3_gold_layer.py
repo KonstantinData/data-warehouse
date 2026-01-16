@@ -15,6 +15,7 @@ and behaves as documented below.
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import re
 import sys
@@ -88,13 +89,14 @@ OUTPUT:
       gold_agg_product_performance.csv
       gold_agg_geo_performance.csv
       gold_wide_sales_enriched.csv
-    _meta/metadata.yaml
+    metadata.yaml
     reports/gold_report.html
     run_log.txt
 
 RUN ID
 - silver_run_id must match: YYYYMMDD_HHMMSS_#<suffix>
 - gold_run_id = <UTC timestamp>_#<same suffix>
+- Optional override: pass gold_run_id as argv[2] or set RUN_ID/ORCHESTRATOR_RUN_ID
 
 GOLD_MART_PLAN (injected by agent):
 - dict with at least: {"mart_list": ["gold_dim_customer", ...]}
@@ -773,18 +775,27 @@ def main() -> int:
     silver_data_dir = resolve_silver_data_dir(silver_run_id)
 
     start_dt = utc_now()
-    gold_run_id = make_gold_run_id_from_silver(silver_run_id, now=start_dt)
+    requested_run_id = None
+    if len(sys.argv) > 2:
+        requested_run_id = sys.argv[2]
+    else:
+        requested_run_id = os.environ.get("RUN_ID") or os.environ.get("ORCHESTRATOR_RUN_ID")
+
+    if requested_run_id and RUN_ID_RE.match(requested_run_id):
+        gold_run_id = requested_run_id
+        run_id_source = "provided"
+    else:
+        gold_run_id = make_gold_run_id_from_silver(silver_run_id, now=start_dt)
+        run_id_source = "generated"
 
     m = RUN_ID_RE.match(silver_run_id)
     suffix = m.group("suffix") if m else None
 
     gold_dir = GOLD_ROOT / gold_run_id
     data_dir = gold_dir / "data"
-    meta_dir = gold_dir / "_meta"
     reports_dir = gold_dir / "reports"
 
     ensure_dir(data_dir)
-    ensure_dir(meta_dir)
     ensure_dir(reports_dir)
 
     run_log_path = gold_dir / "run_log.txt"
@@ -800,10 +811,13 @@ def main() -> int:
     outputs: List[Dict[str, Any]] = []
     errors: List[str] = []
     notes: List[str] = []
+    if requested_run_id and not RUN_ID_RE.match(requested_run_id):
+        notes.append(f"Requested run_id '{requested_run_id}' did not match expected format; generated run_id used instead.")
 
     log("RUN_START")
     log(f"silver_run_id={silver_run_id}")
     log(f"gold_run_id={gold_run_id}")
+    log(f"gold_run_id_source={run_id_source}")
     log(f"REPO_ROOT={REPO_ROOT}")
     log(f"SILVER_DATA_DIR={silver_data_dir}")
     log(f"GOLD_DIR={gold_dir}")
@@ -1044,7 +1058,7 @@ def main() -> int:
         "notes": notes,
     }
 
-    write_yaml(meta, meta_dir / "metadata.yaml")
+    write_yaml(meta, gold_dir / "metadata.yaml")
 
     write_html(
         {

@@ -1,0 +1,312 @@
+"""
+load_1_bronze_layer.py
+
+DESCRIPTION
+Performs a Python-paced ELT of CRM and ERP raw CSV sources into a versioned bronze layer.
+
+Each run produces:
+  artifacts/bronze/<YYYYMMDD_HHMMSS>_#<random>/
+    data/
+      *.csv  (raw, byte-for-byte copies)
+      metadata.yaml
+      run_log.txt
+    reports/
+      elt_report.html
+
+Key properties:
+- Uses UTC timestamps (timezone-aware) for documentation
+- File name per run: YYYYMMDD_HHMMSS_#+random (8 chars)
+- Persists richer metadata (audit + reproducibility + status/errors)
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import platform
+import shutil
+import sys
+import time
+import traceback
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+import pandas as pd
+import yaml
+
+# -----------------------------
+# Config
+# -----------------------------
+
+# Paths (relative to project root)
+RAW_CRM = os.path.join("raw", "source_crm")
+RAW_ERP = os.path.join("raw", "source_erp")
+
+# Match your folder structure from the screenshot
+BRONZE_ROOT = os.path.join("artifacts", "bronze")
+
+# Files to include
+CRM_FILES = ["cst_info.csv", "prd_info.csv", "sales_details.csv"]
+ERP_FILES = ["CST_AZ12.csv", "LOC_A101.csv", "PX_CAT_G1V2.csv"]
+
+# Optional: allow overriding roots via env vars
+RAW_CRM = os.environ.get("RAW_CRM", RAW_CRM)
+RAW_ERP = os.environ.get("RAW_ERP", RAW_ERP)
+BRONZE_ROOT = os.environ.get("BRONZE_ROOT", BRONZE_ROOT)
+
+
+HTML_REPORT_TEMPLATE = """\
+<html>
+<head><title>Bronze ELT Report - {{ run_id }}</title></head>
+<body>
+<h1>Bronze ELT Report</h1>
+<p>Run ID: {{ run_id }}</p>
+<p>Run start (UTC): {{ start_dt }}</p>
+<p>Run end (UTC): {{ end_dt }}</p>
+
+<table border="1" cellpadding="6" cellspacing="0">
+<tr>
+  <th>file</th>
+  <th>source</th>
+  <th>status</th>
+  <th>rows</th>
+  <th>read(s)</th>
+  <th>copy(s)</th>
+  <th>size(bytes)</th>
+  <th>mtime(UTC)</th>
+  <th>sha256</th>
+  <th>error</th>
+</tr>
+{% for r in results %}
+<tr>
+  <td>{{ r.file }}</td>
+  <td>{{ r.source_system }}</td>
+  <td>{{ r.status }}</td>
+  <td>{{ r.rows }}</td>
+  <td>{{ "%.3f"|format(r.read_duration_s or 0) }}</td>
+  <td>{{ "%.3f"|format(r.copy_duration_s or 0) }}</td>
+  <td>{{ r.file_size_bytes or "" }}</td>
+  <td>{{ r.file_mtime_utc or "" }}</td>
+  <td style="font-family: monospace;">{{ r.sha256 or "" }}</td>
+  <td>{{ r.error_message or "" }}</td>
+</tr>
+{% endfor %}
+</table>
+
+</body>
+</html>
+"""
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+
+def utc_now() -> datetime:
+    """Timezone-aware UTC now."""
+    return datetime.now(timezone.utc)
+
+def iso_utc(dt: datetime) -> str:
+    """ISO-8601 with Z suffix."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+def sha256_file(path: str, chunk_size: int = 1024 * 1024) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk_size)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+def safe_stat_utc(path: str) -> Dict[str, Any]:
+    st = os.stat(path)
+    mtime_utc = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+    return {
+        "file_size_bytes": st.st_size,
+        "file_mtime_utc": iso_utc(mtime_utc),
+    }
+
+def write_yaml(data: Dict[str, Any], path: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+
+def write_html_report(context: Dict[str, Any], path: str) -> None:
+    from jinja2 import Template
+    template = Template(HTML_REPORT_TEMPLATE)
+    html = template.render(**context)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+# -----------------------------
+# Main
+# -----------------------------
+
+def main() -> None:
+    start_dt = utc_now()
+    run_id = f"{start_dt.strftime('%Y%m%d_%H%M%S')}_#{str(uuid.uuid4())[:8]}"
+
+    elt_dir = os.path.join(BRONZE_ROOT, run_id)
+    data_dir = os.path.join(elt_dir, "data")
+    report_dir = os.path.join(elt_dir, "reports")
+
+    ensure_dir(data_dir)
+    ensure_dir(report_dir)
+
+    log_path = os.path.join(data_dir, "run_log.txt")
+
+    def log(msg: str) -> None:
+        line = f"{iso_utc(utc_now())} | {msg}"
+        print(line)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+    log(f"RUN_START run_id={run_id}")
+    log(f"CONFIG RAW_CRM={RAW_CRM} RAW_ERP={RAW_ERP} BRONZE_ROOT={BRONZE_ROOT}")
+
+    metadata: Dict[str, Any] = {
+        "run": {
+            "run_id": run_id,
+            "layer": "bronze",
+            "pipeline": "elt_bronze",
+            "started_utc": iso_utc(start_dt),
+        },
+        "env": {
+            "python": sys.version.replace("\n", " "),
+            "pandas": getattr(pd, "__version__", "unknown"),
+            "platform": platform.platform(),
+        },
+        "sources": {
+            "crm_root": RAW_CRM,
+            "erp_root": RAW_ERP,
+        },
+        "tables": {},  # filename -> metadata
+        "summary": {},
+    }
+
+    results: List[Dict[str, Any]] = []
+
+    def process_file(src_root: str, filename: str, source_system: str) -> None:
+        src_path = os.path.join(src_root, filename)
+        dest_path = os.path.join(data_dir, filename)
+
+        rec: Dict[str, Any] = {
+            "file": filename,
+            "source_system": source_system,
+            "source_path": src_path,
+            "status": "FAILED",
+            "rows": 0,
+            "schema": [],
+            "dtypes": {},
+            "read_duration_s": None,
+            "copy_duration_s": None,
+            "file_size_bytes": None,
+            "file_mtime_utc": None,
+            "sha256": None,
+            "error_type": None,
+            "error_message": None,
+        }
+
+        try:
+            if not os.path.exists(src_path):
+                raise FileNotFoundError(f"Source file not found: {src_path}")
+
+            # File stats + checksum (audit/repro)
+            st = safe_stat_utc(src_path)
+            rec.update(st)
+            rec["sha256"] = sha256_file(src_path)
+
+            # Read to profile (rows/schema/dtypes)
+            t0 = time.perf_counter()
+            df = pd.read_csv(src_path)
+            rec["read_duration_s"] = time.perf_counter() - t0
+
+            rec["rows"] = int(len(df))
+            rec["schema"] = list(df.columns)
+            rec["dtypes"] = {c: str(t) for c, t in df.dtypes.items()}
+
+            # Copy raw file byte-for-byte into bronze artifacts
+            t1 = time.perf_counter()
+            shutil.copy2(src_path, dest_path)
+            rec["copy_duration_s"] = time.perf_counter() - t1
+
+            rec["status"] = "SUCCESS"
+            log(
+                f"SUCCESS file={filename} source={source_system} "
+                f"rows={rec['rows']} read={rec['read_duration_s']:.3f}s copy={rec['copy_duration_s']:.3f}s"
+            )
+
+        except Exception as e:
+            rec["error_type"] = type(e).__name__
+            rec["error_message"] = str(e)
+            log(f"ERROR file={filename} source={source_system} {rec['error_type']}: {rec['error_message']}")
+            log(traceback.format_exc())
+
+        # Persist per-table metadata
+        metadata["tables"][filename] = {
+            "source_system": rec["source_system"],
+            "source_path": rec["source_path"],
+            "status": rec["status"],
+            "rows": rec["rows"],
+            "schema": rec["schema"],
+            "dtypes": rec["dtypes"],
+            "read_duration_s": rec["read_duration_s"],
+            "copy_duration_s": rec["copy_duration_s"],
+            "file_size_bytes": rec["file_size_bytes"],
+            "file_mtime_utc": rec["file_mtime_utc"],
+            "sha256": rec["sha256"],
+            "error_type": rec["error_type"],
+            "error_message": rec["error_message"],
+        }
+
+        results.append(rec)
+
+    # Process CRM
+    log("BEGIN CRM SOURCE LOAD")
+    for f in CRM_FILES:
+        process_file(RAW_CRM, f, "CRM")
+
+    # Process ERP
+    log("BEGIN ERP SOURCE LOAD")
+    for f in ERP_FILES:
+        process_file(RAW_ERP, f, "ERP")
+
+    # Summary
+    ok = sum(1 for r in results if r["status"] == "SUCCESS")
+    failed = len(results) - ok
+
+    end_dt = utc_now()
+    metadata["run"]["ended_utc"] = iso_utc(end_dt)
+    metadata["run"]["duration_s"] = (end_dt - start_dt).total_seconds()
+
+    metadata["summary"] = {
+        "files_total": len(results),
+        "files_success": ok,
+        "files_failed": failed,
+    }
+
+    # Write metadata.yaml
+    write_yaml(metadata, os.path.join(data_dir, "metadata.yaml"))
+
+    # Write HTML report
+    report_ctx = {
+        "run_id": run_id,
+        "start_dt": iso_utc(start_dt),
+        "end_dt": iso_utc(end_dt),
+        "results": results,
+    }
+    write_html_report(report_ctx, os.path.join(report_dir, "elt_report.html"))
+
+    log(f"RUN_END run_id={run_id} duration_s={metadata['run']['duration_s']:.3f} success={ok} failed={failed}")
+
+
+if __name__ == "__main__":
+    main()

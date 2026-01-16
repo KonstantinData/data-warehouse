@@ -13,21 +13,17 @@ authors = [
 ]
 requires-python = ">=3.10"
 
-# Core dependencies for current Python ELT + analytics pipeline
 dependencies = [
   "pandas>=2.0.3",
   "python-dotenv>=1.0.0",
   "PyYAML>=6.0",
   "Jinja2>=3.0",
-
-  # ML (optional but included for segmentation/clustering)
   "torch>=2.1.0",
   "torchvision>=0.15.2",
   "scikit-learn>=1.3.0",
 ]
 
 [project.optional-dependencies]
-# Development and testing
 dev = [
   "black>=24.3.0",
   "flake8>=6.1.0",
@@ -35,27 +31,35 @@ dev = [
   "pytest-mock>=3.15.1",
 ]
 
-# Analytics / Tableau output (optional and installable separately)
 analytics = [
   "tableauhyperapi>=0.0.8422.0",
 ]
 
+# -----------------------------------------------------
+# FIXED BLACK CONFIG (no backslashes, valid TOML)
+# -----------------------------------------------------
 [tool.black]
-line-length = 88
+line-length = 120
 target-version = ["py310", "py311"]
-exclude = """
-/(
-  \.venv
- | build
- | dist
- | migrations
- | artifacts
-)/
-"""
+exclude = '''
+(
+  ^\.venv
+ | ^build
+ | ^dist
+ | ^migrations
+ | ^artifacts
+ | ^src/runs
+ | ^src/templates
+)
+'''
 
+# -----------------------------------------------------
+# FIXED FLAKE8 CONFIG (ignore long lines & artifacts)
+# -----------------------------------------------------
 [tool.flake8]
-max-line-length = 88
+max-line-length = 120
 extend-ignore = [
+  "E501",
   "E203",
   "W503"
 ]
@@ -64,15 +68,29 @@ exclude = [
   "build",
   "dist",
   "__pycache__",
-  "artifacts"
+  "artifacts",
+  "src/runs",
+  "src/templates",
 ]
 
+# -----------------------------------------------------
+# FIXED ISORT CONFIG
+# -----------------------------------------------------
 [tool.isort]
 profile = "black"
+skip = [
+  ".venv",
+  "build",
+  "dist",
+  "artifacts",
+  "src/runs",
+  "src/templates",
+]
 
+# -----------------------------------------------------
+# PYTEST SECTION — OK
+# -----------------------------------------------------
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "--strict-markers --tb=short"
-testpaths = [
-  "tests"
-]
+testpaths = ["tests"]

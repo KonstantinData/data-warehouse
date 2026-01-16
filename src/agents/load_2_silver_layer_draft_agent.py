@@ -25,7 +25,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import yaml
@@ -235,6 +235,28 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
 # --------------------------------------------------------------------
 # Profiling helpers
 # --------------------------------------------------------------------
+def _detect_datetime_format(values: pd.Series) -> Optional[str]:
+    sample = values.dropna().astype(str).str.strip()
+    if sample.empty:
+        return None
+    sample = sample.head(20)
+
+    format_patterns = [
+        ("%Y-%m-%d %H:%M:%S", r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$"),
+        ("%Y-%m-%d %H:%M", r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$"),
+        ("%Y-%m-%d", r"^\d{4}-\d{2}-\d{2}$"),
+        ("%m/%d/%Y %H:%M:%S", r"^\d{1,2}/\d{1,2}/\d{4} \d{2}:\d{2}:\d{2}$"),
+        ("%m/%d/%Y", r"^\d{1,2}/\d{1,2}/\d{4}$"),
+        ("%Y/%m/%d", r"^\d{4}/\d{2}/\d{2}$"),
+    ]
+
+    for fmt, pattern in format_patterns:
+        if sample.str.match(pattern).all():
+            return fmt
+
+    return None
+
+
 def _infer_series_type(series: pd.Series) -> str:
     cleaned = series.dropna()
     if cleaned.empty:
@@ -249,7 +271,11 @@ def _infer_series_type(series: pd.Series) -> str:
     numeric = pd.to_numeric(cleaned, errors="coerce")
     numeric_ratio = float(numeric.notna().mean())
 
-    datetime_values = pd.to_datetime(cleaned, errors="coerce", infer_datetime_format=True)
+    detected_format = _detect_datetime_format(cleaned)
+    if detected_format:
+        datetime_values = pd.to_datetime(cleaned, errors="coerce", format=detected_format)
+    else:
+        datetime_values = pd.to_datetime(cleaned, errors="coerce")
     datetime_ratio = float(datetime_values.notna().mean())
 
     if numeric_ratio >= 0.9:

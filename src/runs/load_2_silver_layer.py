@@ -2,19 +2,19 @@
 load_2_silver_layer.py
 
 DESCRIPTION
-Builds the Silver layer from the orchestrator-provided run_id, using the same
+Builds the Silver layer from the latest (or a specified) Bronze run, using the same
 folder structure convention:
 
-  artifacts/bronze/<run_id>/data/*.csv   -> input  (Raw Data / Bronze)
-  artifacts/silver/<run_id>/data/*.csv   -> output (Cleaned, Standardized Data / Silver)
-  artifacts/silver/<run_id>/reports/*    -> human report
+  artifacts/bronze/<bronze_run_id>/data/*.csv   -> input  (Raw Data / Bronze)
+  artifacts/silver/<silver_run_id>/data/*.csv   -> output (Cleaned, Standardized Data / Silver)
+  artifacts/silver/<silver_run_id>/reports/*    -> human report
 
 Each Silver run produces:
-  artifacts/silver/<run_id>/
+  artifacts/silver/<timestamp>_#<bronze_suffix>/
     data/
       *.csv           (cleaned, standardized copies)
-    metadata.yaml     (run + table metadata, lineage)
-    run_log.txt       (technical log)
+      metadata.yaml   (run + table metadata, lineage)
+      run_log.txt     (technical log)
     reports/
       elt_report.html (HTML run report)
 
@@ -35,6 +35,7 @@ TRANSFORMATION SCOPE (Bronze -> Silver)
 IMPORTANT
 - No Gold-layer semantics (no aggregations, no star schema, no business KPI tables).
 - Output structure and grain per file remains 1:1 zur Bronze-Tabelle.
+- Silver run_id = <UTC timestamp>_#<bronze_suffix>  (suffix copied from bronze run_id).
 """
 
 from __future__ import annotations
@@ -61,6 +62,15 @@ SRC_ROOT = CURRENT_FILE.parents[1]  # .../src
 
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
+
+# Now we can import the report agent from src/agents/load_2_report_agent.py
+try:
+    from agents.load_2_silver_layer_draft_agent import run_report_agent
+except Exception:
+    # We will handle failures again in main(); this prevents import-time crash
+    run_report_agent = None  # type: ignore
+
+
 
 # -----------------------------
 # Paths (relative to project root)
@@ -129,13 +139,30 @@ def write_html_report(context: Dict[str, Any], path: str) -> None:
         f.write(html)
 
 
-def resolve_run_id() -> str:
-    run_id = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RUN_ID")
-    if not run_id:
-        raise ValueError("run_id is required (pass as CLI arg or RUN_ID env var).")
-    if not RUN_ID_RE.match(run_id):
-        raise ValueError(f"Invalid run_id format: {run_id}")
-    return run_id
+def find_latest_bronze_run_id() -> str:
+    if not os.path.exists(BRONZE_ROOT):
+        raise FileNotFoundError(f"Bronze root not found: {BRONZE_ROOT}")
+
+    run_ids: List[str] = []
+    for name in os.listdir(BRONZE_ROOT):
+        if os.path.isdir(os.path.join(BRONZE_ROOT, name)) and RUN_ID_RE.match(name):
+            run_ids.append(name)
+
+    if not run_ids:
+        raise FileNotFoundError(f"No bronze runs found in: {BRONZE_ROOT}")
+
+    # Lexicographic sort works with YYYYMMDD_HHMMSS prefix
+    return sorted(run_ids)[-1]
+
+
+def make_silver_run_id_from_bronze(bronze_run_id: str, now: Optional[datetime] = None) -> str:
+    m = RUN_ID_RE.match(bronze_run_id)
+    if not m:
+        raise ValueError(f"Invalid bronze run id format: {bronze_run_id}")
+
+    suffix = m.group("suffix")
+    now_dt = now or utc_now()
+    return f"{now_dt.strftime('%Y%m%d_%H%M%S')}_#{suffix}"
 
 
 # -----------------------------
@@ -150,9 +177,8 @@ def base_silver_cleaning(df: pd.DataFrame) -> pd.DataFrame:
     """
     out = df.copy()
 
-    # Work column-wise on object/string columns only
     for col in out.columns:
-        if out[col].dtype == "object":
+        if out[col].dtype == "object" or pd.api.types.is_string_dtype(out[col]):
             out[col] = out[col].astype("string").str.strip()
             out[col] = out[col].replace({"": pd.NA})
 
@@ -168,8 +194,8 @@ def normalize_date_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
 
     df = df.copy()
     df[col] = pd.to_datetime(df[col], errors="coerce")
-    # Keep only the date component, export as string for CSV
     df[col] = df[col].dt.date.astype("string")
+    df[col] = df[col].replace({"NaT": pd.NA})
     return df
 
 
@@ -203,79 +229,84 @@ def transform_cst_info(df: pd.DataFrame) -> pd.DataFrame:
     - Apply base cleaning
     - Normalize cst_id to Int64
     - Standardize cst_create_date to YYYY-MM-DD
-    - Harmonize gender codes
+    - Trim whitespace in cst_firstname, cst_lastname
+    - Standardize missing values in all columns
+    - Harmonize gender codes (M/F/NA)
     """
     df = base_silver_cleaning(df)
-    df = normalize_integer_id(df, "cst_id")
-    df = normalize_date_column(df, "cst_create_date")
-
+    if "cst_id" in df.columns:
+        df = normalize_integer_id(df, "cst_id")
+    if "cst_create_date" in df.columns:
+        df = normalize_date_column(df, "cst_create_date")
+    for col in ["cst_firstname", "cst_lastname", "cst_marital_status"]:
+        if col in df.columns:
+            df[col] = df[col].astype("string").str.strip().replace({"": pd.NA})
     if "cst_gndr" in df.columns:
-        tmp = df["cst_gndr"].astype("string").str.strip()
-        tmp = tmp.str.upper().replace(
-            {
-                "MALE": "M",
-                "FEMALE": "F",
-            }
-        )
-        df["cst_gndr"] = tmp
-
-    # marital status can remain as-is (M/S/etc.), but cleaned by base_silver_cleaning
+        tmp = df["cst_gndr"].astype("string").str.strip().str.upper()
+        tmp = tmp.replace({
+            "MALE": "M",
+            "FEMALE": "F",
+            "F": "F",
+            "M": "M",
+            "": pd.NA,
+            "NAN": pd.NA,
+            "NONE": pd.NA,
+            "NULL": pd.NA,
+        })
+        df["cst_gndr"] = tmp.replace({"": pd.NA})
+    # Standardize missing values in all columns (convert empty string or "nan"/"null" to pd.NA)
+    for col in df.columns:
+        df[col] = df[col].replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "null": pd.NA, "NULL": pd.NA})
     return df
 
 
-def transform_cst_az12(df: pd.DataFrame) -> pd.DataFrame:
+def transform_CST_AZ12(df: pd.DataFrame) -> pd.DataFrame:
     """
     Silver logic for CST_AZ12.csv:
     - Apply base cleaning
-    - Standardize DOB
-    - Harmonize Gender to M/F where possible
+    - Parse BDATE as date
+    - Standardize missing values in GEN
+    - Trim whitespace in GEN
     """
     df = base_silver_cleaning(df)
-    # Column names assumed: "DOB", "Gender" (case-insensitive handling)
-    cols_lower = {c.lower(): c for c in df.columns}
-
-    if "dob" in cols_lower:
-        df = normalize_date_column(df, cols_lower["dob"])
-
-    if "gender" in cols_lower:
-        gcol = cols_lower["gender"]
-        tmp = df[gcol].astype("string").str.strip()
-        tmp = tmp.str.upper().replace(
-            {
-                "MALE": "M",
-                "FEMALE": "F",
-            }
-        )
-        df[gcol] = tmp
-
+    # Standardize column names for case-insensitive access
+    cols = {c.lower(): c for c in df.columns}
+    if "bdate" in cols:
+        df = normalize_date_column(df, cols["bdate"])
+    if "gen" in cols:
+        tmp = df[cols["gen"]].astype("string").str.strip().str.upper()
+        tmp = tmp.replace({
+            "MALE": "M",
+            "FEMALE": "F",
+            "F": "F",
+            "M": "M",
+            "": pd.NA,
+            "NAN": pd.NA,
+            "NONE": pd.NA,
+            "NULL": pd.NA,
+        })
+        df[cols["gen"]] = tmp.replace({"": pd.NA})
+    # Standardize missing values in all columns
+    for col in df.columns:
+        df[col] = df[col].replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "null": pd.NA, "NULL": pd.NA})
     return df
 
 
-def transform_prd_info(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Silver logic for prd_info.csv:
-    - Apply base cleaning
-    - Normalize prd_cost and prd_wght as numeric
-    - Standardize creation date if present
-    """
-    df = base_silver_cleaning(df)
-    df = normalize_numeric_column(df, "prd_cost")
-    df = normalize_numeric_column(df, "prd_wght")
-    df = normalize_date_column(df, "prd_create_date")
-    return df
-
-
-def transform_loc_a101(df: pd.DataFrame) -> pd.DataFrame:
+def transform_LOC_A101(df: pd.DataFrame) -> pd.DataFrame:
     """
     Silver logic for LOC_A101.csv:
     - Apply base cleaning
-    (ID and country stay as cleaned strings)
+    - Standardize missing values in CNTRY
+    - Trim whitespace in CNTRY
     """
     df = base_silver_cleaning(df)
+    cols = {c.lower(): c for c in df.columns}
+    if "cntry" in cols:
+        df[cols["cntry"]] = df[cols["cntry"]].astype("string").str.strip().replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "null": pd.NA, "NULL": pd.NA})
     return df
 
 
-def transform_px_cat_g1v2(df: pd.DataFrame) -> pd.DataFrame:
+def transform_PX_CAT_G1V2(df: pd.DataFrame) -> pd.DataFrame:
     """
     Silver logic for PX_CAT_G1V2.csv:
     - Apply base cleaning
@@ -284,13 +315,44 @@ def transform_px_cat_g1v2(df: pd.DataFrame) -> pd.DataFrame:
     df = base_silver_cleaning(df)
     if "MAINTENANCE" in df.columns:
         tmp = df["MAINTENANCE"].astype("string").str.strip().str.lower()
-        tmp = tmp.replace(
-            {
-                "yes": "Yes",
-                "no": "No",
-            }
-        )
-        df["MAINTENANCE"] = tmp
+        tmp = tmp.replace({
+            "yes": "Yes",
+            "no": "No",
+            "true": "Yes",
+            "false": "No",
+            "1": "Yes",
+            "0": "No",
+            "": pd.NA,
+            "nan": pd.NA,
+            "null": pd.NA,
+        })
+        df["MAINTENANCE"] = tmp.replace({"": pd.NA})
+    return df
+
+
+def transform_prd_info(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Silver logic for prd_info.csv:
+    - Apply base cleaning
+    - Normalize prd_id to Int64
+    - Parse prd_start_dt and prd_end_dt as date
+    - Standardize missing values in prd_cost, prd_end_dt, prd_line
+    - Trim whitespace in prd_line
+    """
+    df = base_silver_cleaning(df)
+    if "prd_id" in df.columns:
+        df = normalize_integer_id(df, "prd_id")
+    if "prd_cost" in df.columns:
+        df = normalize_numeric_column(df, "prd_cost")
+    if "prd_start_dt" in df.columns:
+        df = normalize_date_column(df, "prd_start_dt")
+    if "prd_end_dt" in df.columns:
+        df = normalize_date_column(df, "prd_end_dt")
+    if "prd_line" in df.columns:
+        df["prd_line"] = df["prd_line"].astype("string").str.strip().replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "null": pd.NA, "NULL": pd.NA})
+    # Standardize missing values in all columns
+    for col in df.columns:
+        df[col] = df[col].replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "null": pd.NA, "NULL": pd.NA})
     return df
 
 
@@ -298,20 +360,38 @@ def transform_sales_details(df: pd.DataFrame) -> pd.DataFrame:
     """
     Silver logic for sales_details.csv:
     - Apply base cleaning
-    - Normalize any '*date' columns to YYYY-MM-DD
-    - Normalize obvious numeric measures (e.g. quantity, price, discount)
+    - Normalize sls_cust_id to Int64
+    - Parse sls_order_dt, sls_ship_dt, sls_due_dt as date (if possible)
+    - Standardize missing values in sls_sales, sls_price
+    - Normalize sls_sales, sls_quantity, sls_price as numeric
     """
     df = base_silver_cleaning(df)
-    # date-like columns
+    # Normalize sls_cust_id to Int64
+    if "sls_cust_id" in df.columns:
+        df = normalize_integer_id(df, "sls_cust_id")
+    # Parse date columns (if they are not already date)
+    for col in ["sls_order_dt", "sls_ship_dt", "sls_due_dt"]:
+        if col in df.columns:
+            # Try to parse as date if not already
+            # If integer (e.g. YYYYMMDD), parse accordingly
+            if pd.api.types.is_integer_dtype(df[col]) or pd.api.types.is_float_dtype(df[col]):
+                # Try to parse as YYYYMMDD
+                df[col] = pd.to_datetime(df[col], format="%Y%m%d", errors="coerce")
+            else:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+            df[col] = df[col].dt.date.astype("string")
+            df[col] = df[col].replace({"NaT": pd.NA})
+    # Normalize numeric columns
+    for col in ["sls_sales", "sls_quantity", "sls_price"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Standardize missing values in sls_sales, sls_price
+    for col in ["sls_sales", "sls_price"]:
+        if col in df.columns:
+            df[col] = df[col].replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "null": pd.NA, "NULL": pd.NA})
+    # Standardize missing values in all columns
     for col in df.columns:
-        if "date" in col.lower():
-            df = normalize_date_column(df, col)
-
-    # numeric-like columns (best-effort, no assumptions about full schema)
-    for candidate in ["quantity", "qty", "unit_price", "price", "discount"]:
-        if candidate in df.columns:
-            df = normalize_numeric_column(df, candidate)
-
+        df[col] = df[col].replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "null": pd.NA, "NULL": pd.NA})
     return df
 
 
@@ -325,25 +405,18 @@ def transform_for_silver(filename: str, df: pd.DataFrame) -> pd.DataFrame:
     - basic domain-standardization (e.g. gender, maintenance flag)
     """
     name = filename.lower()
-
     if name == "cst_info.csv":
         return transform_cst_info(df)
-
     if name == "cst_az12.csv":
-        return transform_cst_az12(df)
-
+        return transform_CST_AZ12(df)
+    if name == "loc_a101.csv":
+        return transform_LOC_A101(df)
+    if name == "px_cat_g1v2.csv":
+        return transform_PX_CAT_G1V2(df)
     if name == "prd_info.csv":
         return transform_prd_info(df)
-
-    if name == "loc_a101.csv":
-        return transform_loc_a101(df)
-
-    if name == "px_cat_g1v2.csv":
-        return transform_px_cat_g1v2(df)
-
     if name == "sales_details.csv":
         return transform_sales_details(df)
-
     # Default: only generic base cleaning
     return base_silver_cleaning(df)
 
@@ -400,15 +473,16 @@ HTML_REPORT_TEMPLATE = """\
 # Main
 # -----------------------------
 def main() -> int:
-    run_id = resolve_run_id()
-    bronze_run_id = run_id
+    # bronze_run_id can be passed as CLI arg; otherwise latest bronze is used.
+    bronze_run_id = sys.argv[1] if len(sys.argv) > 1 else find_latest_bronze_run_id()
 
-    bronze_data_dir = os.path.join(BRONZE_ROOT, run_id, "data")
+    bronze_data_dir = os.path.join(BRONZE_ROOT, bronze_run_id, "data")
     if not os.path.exists(bronze_data_dir):
         raise FileNotFoundError(f"Bronze data dir not found: {bronze_data_dir}")
 
+    # Build silver run_id (new timestamp + bronze suffix)
     start_dt = utc_now()
-    silver_run_id = run_id
+    silver_run_id = make_silver_run_id_from_bronze(bronze_run_id, now=start_dt)
 
     # Create silver folders
     elt_dir = os.path.join(SILVER_ROOT, silver_run_id)
@@ -417,8 +491,8 @@ def main() -> int:
     ensure_dir(data_dir)
     ensure_dir(report_dir)
 
-    # Logging (run_log.txt under run root)
-    log_file = os.path.join(elt_dir, "run_log.txt")
+    # Logging (run_log.txt under data/)
+    log_file = os.path.join(data_dir, "run_log.txt")
 
     def log(msg: str) -> None:
         ts = iso_utc(utc_now())
@@ -576,8 +650,8 @@ def main() -> int:
         "files_failed": failed,
     }
 
-    # Persist metadata.yaml under run root
-    write_yaml(metadata, os.path.join(elt_dir, "metadata.yaml"))
+    # Persist metadata.yaml under data/
+    write_yaml(metadata, os.path.join(data_dir, "metadata.yaml"))
 
     # Write HTML report under reports/
     report_html_path = os.path.join(report_dir, "elt_report.html")
@@ -589,6 +663,21 @@ def main() -> int:
         "results": results,
     }
     write_html_report(report_ctx, report_html_path)
+
+    # Call LLM-based report agent (if import was successful)
+    if run_report_agent is not None:
+        try:
+            log("CALL agents.load_2_report_agent.run_report_agent ...")
+            run_report_agent(
+                run_id=bronze_run_id,
+                silver_run_id=silver_run_id,
+            )
+            log("load_2_report_agent finished successfully.")
+        except Exception as e:
+            # LLM/report failures must NOT break the ETL run
+            log(f"WARNING: load_2_report_agent failed: {type(e).__name__}: {e}")
+    else:
+        log("WARNING: run_report_agent could not be imported; skipping LLM report generation.")
 
     log(
         f"RUN_END run_id={silver_run_id} "

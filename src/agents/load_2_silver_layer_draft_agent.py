@@ -22,7 +22,9 @@ IMPORTANT:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -31,6 +33,8 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------
 # Data Analytics Process (1–10) – extended system context
@@ -215,21 +219,40 @@ def _build_openai_client() -> OpenAI:
             "- cannot call OpenAI LLM."
         )
 
-    client = OpenAI(api_key=api_key)
+    api_key = api_key.strip()
+    if len(api_key) < 20:
+        raise RuntimeError(
+            "OpenAI API key found but appears too short; check environment configuration."
+        )
+
+    try:
+        client = OpenAI(api_key=api_key)
+    except Exception as exc:
+        raise RuntimeError("Failed to initialize OpenAI client.") from exc
     return client
 
 
 def _read_text(path: Path) -> str:
     if not path.exists():
+        logger.warning("Text file not found: %s", path)
         return ""
-    return path.read_text(encoding="utf-8")
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.exception("Failed to read text file: %s", path)
+        raise RuntimeError(f"Failed to read text file: {path}") from exc
 
 
 def _read_yaml(path: Path) -> Dict[str, Any]:
     if not path.exists():
+        logger.warning("YAML file not found: %s", path)
         return {}
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception as exc:
+        logger.exception("Failed to read YAML file: %s", path)
+        raise RuntimeError(f"Failed to read YAML file: {path}") from exc
 
 
 # --------------------------------------------------------------------
@@ -369,9 +392,16 @@ def _profile_table(df: pd.DataFrame, filename: str) -> Dict[str, Any]:
 
 def _profile_bronze_run(data_dir: Path) -> Dict[str, Any]:
     tables: Dict[str, Any] = {}
+    errors: List[Dict[str, str]] = []
     for csv_path in sorted(data_dir.glob("*.csv")):
-        df = pd.read_csv(csv_path)
-        tables[csv_path.name] = _profile_table(df, csv_path.name)
+        try:
+            df = pd.read_csv(csv_path)
+            tables[csv_path.name] = _profile_table(df, csv_path.name)
+        except Exception as exc:
+            logger.exception("Failed to profile CSV: %s", csv_path.name)
+            error_message = str(exc)
+            errors.append({"file": csv_path.name, "error": error_message})
+            tables[csv_path.name] = {"error": error_message}
 
     schema_overview = {
         "table_count": len(tables),
@@ -382,12 +412,14 @@ def _profile_bronze_run(data_dir: Path) -> Dict[str, Any]:
                 "column_count": tbl["column_count"],
             }
             for tbl in tables.values()
+            if "error" not in tbl
         ],
     }
 
     return {
         "schema_overview": schema_overview,
         "tables": tables,
+        "errors": errors,
     }
 
 
@@ -404,6 +436,15 @@ def _render_profile_markdown(profile: Dict[str, Any]) -> str:
         )
 
     for table_name, table in profile.get("tables", {}).items():
+        if "error" in table:
+            lines.extend(
+                [
+                    "",
+                    f"### Table: {table_name}",
+                    f"- Error: {table['error']}",
+                ]
+            )
+            continue
         lines.extend(
             [
                 "",
@@ -448,6 +489,9 @@ def run_report_agent(
       - silver_run_human_report.md
       - silver_run_agent_context.json
     """
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logger.info("Starting Silver draft report generation. run_id=%s", run_id)
+    start_time = time.monotonic()
 
     bronze_run_dir = Path("artifacts") / "bronze" / run_id
     data_dir = bronze_run_dir / "data"
@@ -468,6 +512,7 @@ def run_report_agent(
     html_text = _read_text(html_report_path)
     metadata_dict = _read_yaml(metadata_path)
 
+    logger.info("Profiling Bronze run artifacts.")
     profile = _profile_bronze_run(data_dir)
     profile_md = _render_profile_markdown(profile)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -526,10 +571,15 @@ def run_report_agent(
         },
     ]
 
-    human_resp = client.chat.completions.create(
-        model=model_name,
-        messages=human_messages,
-    )
+    logger.info("Requesting human-readable report from OpenAI.")
+    try:
+        human_resp = client.chat.completions.create(
+            model=model_name,
+            messages=human_messages,
+        )
+    except Exception as exc:
+        logger.exception("OpenAI call failed for human report generation.")
+        raise RuntimeError("OpenAI call failed for human report generation.") from exc
     human_report_md = human_resp.choices[0].message.content or ""
 
     human_report_path = output_dir / "silver_run_human_report.md"
@@ -537,6 +587,7 @@ def run_report_agent(
         f"{human_report_md}\n\n{profile_md}",
         encoding="utf-8",
     )
+    logger.info("Wrote human-readable report: %s", human_report_path)
 
     # ------------------------------------------------------------
     # 2) Machine-readable context for downstream agents (JSON)
@@ -579,6 +630,9 @@ def run_report_agent(
         json.dumps(json_data, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    logger.info("Wrote agent context JSON: %s", json_out_path)
+    elapsed = time.monotonic() - start_time
+    logger.info("Completed Silver draft report generation in %.2fs.", elapsed)
 
 
 # Optional: manual test

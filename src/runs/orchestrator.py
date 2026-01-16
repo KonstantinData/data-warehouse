@@ -14,17 +14,18 @@ Responsibilities:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import subprocess
 import sys
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from runs.load_summary_report import write_summary_report
 
 import yaml
 from dotenv import dotenv_values, load_dotenv
@@ -197,60 +198,6 @@ def detect_no_new_data(bronze_metadata: Dict[str, Any]) -> bool:
     files_failed = summary.get("files_failed", 0)
     files_total = summary.get("files_total", 0)
     return files_total > 0 and files_success == 0 and files_failed == 0
-
-
-def write_summary_report(
-    output_dir: Path,
-    run_id: str,
-    started_utc: str,
-    ended_utc: str,
-    step_results: List[StepResult],
-    bronze_run_id: Optional[str],
-    silver_run_id: Optional[str],
-    gold_run_id: Optional[str],
-    no_new_data: bool,
-) -> None:
-    summary = {
-        "run_id": run_id,
-        "started_utc": started_utc,
-        "ended_utc": ended_utc,
-        "no_new_data": no_new_data,
-        "bronze_run_id": bronze_run_id,
-        "silver_run_id": silver_run_id,
-        "gold_run_id": gold_run_id,
-        "steps": [asdict(result) for result in step_results],
-    }
-    output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "summary_report.json"
-    json_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-    md_lines = [
-        f"# Orchestration Summary: {run_id}",
-        "",
-        f"- Started (UTC): {started_utc}",
-        f"- Ended (UTC): {ended_utc}",
-        f"- No new data: {no_new_data}",
-        "",
-        "## Run IDs",
-        f"- Bronze: {bronze_run_id or 'N/A'}",
-        f"- Silver: {silver_run_id or 'N/A'}",
-        f"- Gold: {gold_run_id or 'N/A'}",
-        "",
-        "## Step Results",
-    ]
-    for result in step_results:
-        md_lines.extend(
-            [
-                f"### {result.name}",
-                f"- Status: {result.status}",
-                f"- Duration (s): {result.duration_s:.3f}",
-                f"- Log: {result.log_path or 'N/A'}",
-                f"- Details: {result.details or 'N/A'}",
-                "",
-            ]
-        )
-    md_path = output_dir / "summary_report.md"
-    md_path.write_text("\n".join(md_lines), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -474,7 +421,7 @@ def main() -> int:
                         gold_run_id = find_latest_run_id(gold_root)
 
     ended = utc_now()
-    summary_dir = output_root / "summary"
+    summary_dir = repo_root / "artifacts" / "reports" / orchestrator_run_id
     write_summary_report(
         output_dir=summary_dir,
         run_id=orchestrator_run_id,

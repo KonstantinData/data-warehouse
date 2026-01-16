@@ -193,6 +193,10 @@ def main() -> int:
     runner_path.write_text(python_code, encoding="utf-8")
     print(f"[BUILDER] Wrote load_3_gold_layer.py to: {runner_path}")
 
+    if os.getenv("SKIP_RUNNER_EXECUTION") == "1":
+        print("[BUILDER] SKIP_RUNNER_EXECUTION=1 set; skipping runner execution.")
+        return 0
+
     # Execute script
     print("[BUILDER] Executing generated Gold ETL script...")
     cmd = [sys.executable, str(runner_path), silver_run_id]

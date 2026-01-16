@@ -177,6 +177,10 @@ def main() -> int:
     print(f"[BUILDER] Wrote load_2_silver_layer.py to: {runner_path}")
 
     # Execute script
+    if os.getenv("SKIP_RUNNER_EXECUTION") == "1":
+        print("[BUILDER] SKIP_RUNNER_EXECUTION=1 set; skipping runner execution.")
+        return 0
+
     bronze_run_id = agent_context.get("bronze_run_id")
     if bronze_run_id:
         cmd = [sys.executable, str(runner_path), bronze_run_id]

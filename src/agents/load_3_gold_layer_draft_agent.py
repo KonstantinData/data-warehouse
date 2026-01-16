@@ -7,13 +7,13 @@ Role:
 - It reads the latest (or given) Silver-layer run context and metadata,
   calls a live OpenAI LLM, and produces:
 
-  1) gold_design_report.md   (human-readable Gold-layer design and rationale)
-  2) gold_mart_plan.json     (structured machine-readable plan for Gold marts)
+  1) gold_run_human_report.md     (human-readable Gold-layer design and rationale)
+  2) gold_run_agent_context.json  (structured machine-readable plan for Gold marts)
 
 Outputs are stored under:
-  artifacts/gold/planning/<silver_run_id>/
-    - reports/gold_design_report.md
-    - data/gold_mart_plan.json
+  tmp/draft_reports/gold/<silver_run_id>/
+    - gold_run_human_report.md
+    - gold_run_agent_context.json
 
 This agent is intended to work together with a static, hand-maintained
 load_3_gold_layer.py implementation that reads gold_mart_plan.json (optionally)
@@ -205,14 +205,13 @@ def create_gold_mart_plan(
     model_name: str = "gpt-4.1-mini",
 ) -> Dict[str, Any]:
     """
-    Ask the LLM to produce a strict JSON Gold-mart plan that a static
+    Ask the LLM to produce a strict JSON Gold-layer plan that a static
     Gold-runner can consume.
 
     The plan does NOT contain code, only structure:
-    - which marts to build
-    - type/classification
-    - dependencies
-    - grain, keys, measures, notes
+    - dimensions, facts, and marts
+    - grain, keys, measures
+    - SCD guidance and aggregation opportunities
     """
     system_msg = {
         "role": "system",
@@ -238,16 +237,41 @@ def create_gold_mart_plan(
             "{\n"
             '  \"silver_run_id\": string,\n'
             '  \"gold_layer_objective\": string,\n'
-            '  \"recommended_marts\": [\n'
+            '  \"dimensions\": [\n'
             "    {\n"
             '      \"name\": string,\n'
-            '      \"type\": \"dim\" | \"fact\" | \"agg\" | \"wide\" | \"other\",\n'
-            '      \"priority\": \"mandatory\" | \"optional\",\n'
-            '      \"depends_on\": [string],\n'
+            '      \"source_tables\": [string],\n'
+            '      \"grain\": string,\n'
+            '      \"primary_keys\": [string],\n'
+            '      \"attributes\": [string],\n'
+            '      \"scd_guidance\": string,\n'
+            '      \"notes\": [string]\n'
+            "    }\n"
+            "  ],\n"
+            '  \"facts\": [\n'
+            "    {\n"
+            '      \"name\": string,\n'
+            '      \"source_tables\": [string],\n'
             '      \"grain\": string,\n'
             '      \"primary_keys\": [string],\n'
             '      \"measures\": [string],\n'
             '      \"dimensions\": [string],\n'
+            '      \"aggregation_opportunities\": [string],\n'
+            '      \"notes\": [string]\n'
+            "    }\n"
+            "  ],\n"
+            '  \"marts\": [\n'
+            "    {\n"
+            '      \"name\": string,\n'
+            '      \"type\": \"dim\" | \"fact\" | \"agg\" | \"wide\" | \"other\",\n'
+            '      \"priority\": \"mandatory\" | \"optional\",\n'
+            '      \"source_tables\": [string],\n'
+            '      \"grain\": string,\n'
+            '      \"primary_keys\": [string],\n'
+            '      \"measures\": [string],\n'
+            '      \"dimensions\": [string],\n'
+            '      \"scd_guidance\": string,\n'
+            '      \"aggregation_opportunities\": [string],\n'
             '      \"notes\": [string]\n'
             "    }\n"
             "  ],\n"
@@ -269,6 +293,8 @@ def create_gold_mart_plan(
             "  * gold_wide_sales_enriched (may be optional if joins are risky)\n"
             "- For each mart, set 'priority' to 'mandatory' or 'optional' depending on how\n"
             "  critical it is for BI/analytics in Phase 1.\n"
+            "- Provide explicit SCD guidance for dimensions (e.g., SCD1 vs SCD2).\n"
+            "- Include aggregation opportunities for facts and marts.\n"
             "- Use 'notes' to capture important design decisions or caveats.\n"
         ),
     }
@@ -289,16 +315,59 @@ def create_gold_mart_plan(
             "gold_layer_objective": (
                 "Fallback Gold plan: basic dims/fact/aggregates due to JSON parse error."
             ),
-            "recommended_marts": [
+            "dimensions": [
+                {
+                    "name": "gold_dim_customer",
+                    "source_tables": ["cst_info"],
+                    "grain": "one row per customer",
+                    "primary_keys": ["customer_id"],
+                    "attributes": ["customer_name", "country"],
+                    "scd_guidance": "SCD Type 1 unless historical changes are required.",
+                    "notes": [
+                        "Minimal fallback definition; please refine based on real schema."
+                    ],
+                },
+                {
+                    "name": "gold_dim_product",
+                    "source_tables": ["prd_info"],
+                    "grain": "one row per product",
+                    "primary_keys": ["product_id"],
+                    "attributes": ["product_name"],
+                    "scd_guidance": "SCD Type 1 unless historical changes are required.",
+                    "notes": [
+                        "Minimal fallback definition; please refine based on real schema."
+                    ],
+                },
+            ],
+            "facts": [
+                {
+                    "name": "gold_fact_sales",
+                    "source_tables": ["sales_details"],
+                    "grain": "one row per transaction/line",
+                    "primary_keys": ["sales_id"],
+                    "measures": ["sales_amount"],
+                    "dimensions": ["customer_id", "product_id"],
+                    "aggregation_opportunities": [
+                        "daily sales by product",
+                        "monthly sales by customer",
+                    ],
+                    "notes": [
+                        "Minimal fallback definition; please refine based on real schema."
+                    ],
+                }
+            ],
+            "marts": [
                 {
                     "name": "gold_dim_customer",
                     "type": "dim",
                     "priority": "mandatory",
-                    "depends_on": ["cst_info"],
+                    "source_tables": ["cst_info"],
                     "grain": "one row per customer",
                     "primary_keys": ["customer_id"],
                     "measures": [],
                     "dimensions": ["customer_name", "country"],
+                    "scd_guidance": "SCD Type 1 unless historical changes are required.",
+                    "aggregation_opportunities": [],
                     "notes": [
                         "Minimal fallback definition; please refine based on real schema."
                     ],
@@ -307,11 +376,13 @@ def create_gold_mart_plan(
                     "name": "gold_dim_product",
                     "type": "dim",
                     "priority": "mandatory",
-                    "depends_on": ["prd_info"],
+                    "source_tables": ["prd_info"],
                     "grain": "one row per product",
                     "primary_keys": ["product_id"],
                     "measures": [],
                     "dimensions": ["product_name"],
+                    "scd_guidance": "SCD Type 1 unless historical changes are required.",
+                    "aggregation_opportunities": [],
                     "notes": [
                         "Minimal fallback definition; please refine based on real schema."
                     ],
@@ -320,11 +391,16 @@ def create_gold_mart_plan(
                     "name": "gold_fact_sales",
                     "type": "fact",
                     "priority": "mandatory",
-                    "depends_on": ["sales_details"],
+                    "source_tables": ["sales_details"],
                     "grain": "one row per transaction/line",
                     "primary_keys": ["sales_id"],
                     "measures": ["sales_amount"],
                     "dimensions": ["customer_id", "product_id"],
+                    "scd_guidance": "Facts are typically append-only; no SCD needed.",
+                    "aggregation_opportunities": [
+                        "daily sales by product",
+                        "monthly sales by customer",
+                    ],
                     "notes": [
                         "Minimal fallback definition; please refine based on real schema."
                     ],
@@ -345,7 +421,7 @@ def main() -> int:
     # Determine repo root and relevant directories
     repo_root = find_repo_root(Path(__file__).resolve())
     silver_root = repo_root / "artifacts" / "silver"
-    planning_root = repo_root / "artifacts" / "gold" / "planning"
+    planning_root = repo_root / "tmp" / "draft_reports" / "gold"
 
     # Determine which Silver run to use
     if len(sys.argv) > 1:
@@ -364,14 +440,10 @@ def main() -> int:
 
     # Output directories and paths (Gold planning)
     planning_run_dir = planning_root / silver_run_id
-    reports_dir = planning_run_dir / "reports"
-    data_dir = planning_run_dir / "data"
+    planning_run_dir.mkdir(parents=True, exist_ok=True)
 
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    design_report_path = reports_dir / "gold_design_report.md"
-    mart_plan_path = data_dir / "gold_mart_plan.json"
+    design_report_path = planning_run_dir / "gold_run_human_report.md"
+    mart_plan_path = planning_run_dir / "gold_run_agent_context.json"
 
     # LLM client
     client = build_llm_client()

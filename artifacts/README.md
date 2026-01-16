@@ -1,166 +1,69 @@
-# Generated Outputs & ELT Artifacts
+# Artifacts: Output Contract
 
-The **`artifacts/`** directory is the canonical storage location for all outputs produced by the ELT pipeline. It hosts persistent artifacts from the Bronze, Silver, Gold, Machine Learning workflows, and global reports. Each run — where applicable — is stored in a timestamped, hash-tagged subfolder to ensure traceability and reproducibility.
+## Scope
+- Defines the artifact model, layout, and lifecycle for `artifacts/`.
+- Does not describe how artifacts are produced; see runner and ADR documentation.
 
-The directory structure is as follows:
+## Guarantees
+- Artifacts are immutable, run-scoped outputs under `artifacts/<layer>/<run_id>/...`.
+- `run_id` ties outputs to a single execution and is never reused.
+- Artifacts are outputs only; they are not used as inputs for business logic.
 
+## Non-goals
+- Storing raw input data (see `raw/`).
+- Describing layer transformation logic (see `src/` and ADRs).
+
+## Artifact Types and Purpose
+- **Layer outputs:** Bronze, Silver, Gold run directories.
+- **Orchestrator outputs:** execution logs and summary reports.
+- **Cross-layer reports:** consolidated diagnostics and rollups.
+- **Ephemeral artifacts:** layer-local temporary outputs (allowed only under `tmp/`).
+
+## Directory Layout Rules
 ```
 artifacts/
-├── bronze/
-│   └── <timestamp>_#<hash>/
-│       ├── data/
-│       └── reports/
-├── silver/
-│   └── <timestamp>_#<hash>/
+├── bronze/<run_id>/
+│   ├── data/
+│   └── reports/
+├── silver/<run_id>/
+│   ├── data/
+│   ├── reports/
+│   └── tmp/        # ephemeral, non-authoritative
+├── gold/
+│   ├── planning/<run_id>/
+│   │   ├── data/
+│   │   └── reports/
+│   └── marts/<run_id>/
+│       ├── _meta/
 │       ├── data/
 │       ├── reports/
-│       └── tmp/
-├── gold/
-│   ├── planning/
-│   │   └── <timestamp>_#<hash>/
-│   │       ├── data/
-│   │       └── reports/
-│   └── marts/
-│       └── <timestamp>_#<hash>/
-│           ├── _meta/
-│           ├── data/
-│           ├── reports/
-│           └── run_log.txt
-├── ml/
-└── reports/
+│       └── run_log.txt
+├── orchestrator/<run_id>/
+│   └── logs/
+└── reports/<run_id>/
+    └── summary_report.*
 ```
 
-### Bronze Layer Outputs
+## Retention Policy
+- Retain artifacts for audit and reproducibility until explicitly purged.
+- Purges must be documented and repeatable (automated or runbook-driven).
 
-**Path Pattern:**
+## Versioning Strategy
+- `run_id` is the version boundary for outputs.
+- Re-runs create a new `run_id`; overwriting prior runs is prohibited.
 
-```
-artifacts/bronze/<timestamp>_#<hash>/
-```
+## Relationship to `run_id`
+- `run_id` must uniquely identify a single execution context.
+- `run_id` links to the provenance of code, configuration, and inputs.
 
-**Contents:**
+## Reproducible vs. Ephemeral
+- **Reproducible:** `data/`, `reports/`, `_meta/`, and `run_log.txt` for a run.
+- **Ephemeral:** `tmp/` directories (must be safe to delete at any time).
 
-* `data/` — Raw ingested datasets stored as snapshots (e.g., CSV, Parquet).
-* `reports/` — Metadata about the run (schemas, row counts, profiling outputs, timing).
+## Ownership and Responsibilities
+- Repository maintainers own artifact policy and retention enforcement.
+- Pipeline operators own cleanup automation and verification.
 
-**Purpose:**
-Captures the **initial ingestion stage** of all source data with minimal transformation. This layer is the basis for Silver transformation and must be immutable once produced.
-
----
-
-### Silver Layer Outputs
-
-**Path Pattern:**
-
-```
-artifacts/silver/<timestamp>_#<hash>/
-```
-
-**Contents:**
-
-* `data/` — Cleaned, standardized, and typed data sets.
-* `reports/` — Diagnostics and validation artifacts related to transformation.
-* `tmp/` — Temporary artifacts or staging files used by transformation logic (ephemeral).
-
-**Purpose:**
-Holds **standardized data** that has been cleansed and prepared for analytical use or further transformation in Gold.
-
----
-
-### Gold Layer Outputs
-
-Gold is subdivided into **planning outputs** and **final mart outputs**:
-
-#### Gold Planning
-
-**Path Pattern:**
-
-```
-artifacts/gold/planning/<timestamp>_#<hash>/
-```
-
-**Contents:**
-
-* `data/` — Intermediate plan artifacts (strategy datasets, mapping candidates).
-* `reports/` — Metadata and diagnostics from the Gold planning step.
-
-**Purpose:**
-Stores outputs from the Gold layer planning process (e.g., definitions and evaluation artifacts that inform the final mart build).
-
----
-
-#### Gold Marts
-
-**Path Pattern:**
-
-```
-artifacts/gold/marts/<timestamp>_#<hash>/
-```
-
-**Contents:**
-
-* `_meta/` — Run metadata including schema definitions, lineage mappings, and run configuration.
-* `data/` — Gold-level outputs (models, business tables, aggregated datasets).
-* `reports/` — Diagnostics, profiling outputs, and summaries specific to this mart run.
-* `run_log.txt` — Execution log for this Gold run.
-
-**Purpose:**
-Contains **business-ready artifacts** produced by the final Gold layer build, intended for consumption by analytics, BI dashboards, ML pipelines, and reporting workflows.
-
----
-
-### Machine Learning Artifacts
-
-```
-artifacts/ml/
-```
-
-**Contents and Use:**
-Artifacts specific to machine learning workflows (e.g., feature engineering outputs, training/test snapshots, ML-specific data artifacts). The internal structure may evolve depending on use cases.
-
-**Purpose:**
-Holds ML-oriented data and outputs derived from Silver or Gold layers.
-
----
-
-### Cross-Layer Reports
-
-```
-artifacts/reports/
-```
-
-**Contents:**
-High-level reports and dashboards that synthesize information across Bronze, Silver, and Gold runs. These can include:
-
-* Composite KPI summaries
-* Data quality scorecards
-* Lineage and profiling dashboards
-* Cross-run diagnostics
-
-**Purpose:**
-Provides **centralized visibility** into the health, performance, and state of the ELT pipelines across all layers.
-
----
-
-### Naming Convention
-
-All **timestamped run folders** follow the format:
-
-```
-YYYYMMDDHHMMSS_#<hash>
-```
-
-This ensures:
-
-* Clear chronological ordering
-* Traceability back to code and commit versions
-* Idempotent reproducibility of runs
-
----
-
-### Best Practices
-
-* **Do not modify** artifacts after creation; treat timestamped folders as immutable snapshots.
-* Use metadata in `reports/` and `_meta/` folders to validate and audit runs.
-* Enforce retention policies based on governance or storage constraints.
-* Only remove `tmp/` or ephemeral folders according to automated cleanup policies.
+## Links
+- **Upstream:** ADRs for run_id and artifact policy: `docs/adr/0003-run-id-and-artifact-layout.md`, `docs/adr/0010-artifacts-versioning-policy.md`.
+- **Downstream:** Layer contracts: `bronze/README.md`, `silver/README.md`, `gold/README.md`.

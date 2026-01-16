@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import traceback
 from datetime import datetime
@@ -39,6 +40,8 @@ def _generate_run_id() -> str:
 
 
 def _read_text(path: Path) -> str:
+    if not path.exists():
+        raise FileNotFoundError(f"Expected file at {path} but it does not exist.")
     return path.read_text(encoding="utf-8")
 
 
@@ -47,15 +50,28 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _log_line(log_path: Path, message: str) -> None:
+def _configure_logger(log_path: Path) -> logging.Logger:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(message + "\n")
+    logger = logging.getLogger("code_quality_agents")
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)sZ %(levelname)s %(message)s")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    return logger
 
 
 def _resolve_prompt_path(path_value: str | None, candidates: tuple[Path, ...]) -> Path:
     if path_value:
-        return Path(path_value)
+        candidate_path = Path(path_value)
+        if not candidate_path.exists():
+            raise FileNotFoundError(f"Prompt file not found at {candidate_path}.")
+        return candidate_path
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -76,25 +92,33 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Path to the working prompt.",
     )
+    parser.add_argument(
+        "--output-root",
+        default=str(OUTPUT_ROOT),
+        help="Directory to store analysis artifacts.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
     run_id = _generate_run_id()
-    output_dir = OUTPUT_ROOT / run_id
+    output_dir = Path(args.output_root) / run_id
     log_path = output_dir / "logs" / "run_log.txt"
+    logger = _configure_logger(log_path)
 
-    _log_line(log_path, f"Start: {datetime.utcnow().isoformat()}Z")
-    _log_line(log_path, f"Run ID: {run_id}")
-    _log_line(log_path, f"Target path: {args.target_path}")
+    logger.info("Start")
+    logger.info("Run ID: %s", run_id)
+    logger.info("Target path: %s", args.target_path)
     try:
         target_path = Path(args.target_path)
+        if not target_path.exists():
+            raise FileNotFoundError(f"Target file not found at {target_path}.")
         system_prompt_path = _resolve_prompt_path(args.system, DEFAULT_SYSTEM_PROMPT_CANDIDATES)
         working_prompt_path = _resolve_prompt_path(args.working, DEFAULT_WORKING_PROMPT_CANDIDATES)
 
-        _log_line(log_path, f"System prompt: {system_prompt_path}")
-        _log_line(log_path, f"Working prompt: {working_prompt_path}")
+        logger.info("System prompt: %s", system_prompt_path)
+        logger.info("Working prompt: %s", working_prompt_path)
 
         target_source = _read_text(target_path)
         system_prompt = _read_text(system_prompt_path)
@@ -124,36 +148,51 @@ def main() -> int:
 
         total_start = perf_counter()
         for name, agent_fn in agent_sequence:
-            _log_line(log_path, f"Agent start: {name}")
+            logger.info("Agent start: %s", name)
             start = perf_counter()
             result = agent_fn(request)
             duration = perf_counter() - start
             timings[name] = duration
             results.append(result)
             _write_text(output_dir / "agents" / f"{name}.md", result.raw_markdown)
-            _log_line(log_path, f"Agent success: {name} ({duration:.3f}s)")
+            logger.info("Agent success: %s (%.3fs)", name, duration)
 
-        _log_line(log_path, "Orchestrator start: code_quality_orchestrator")
+        logger.info("Orchestrator start: code_quality_orchestrator")
         orchestrator_start = perf_counter()
         final_answer, notes = code_quality_orchestrator.run_orchestrator(request, results)
         orchestrator_duration = perf_counter() - orchestrator_start
         timings["orchestrator"] = orchestrator_duration
-        _log_line(log_path, f"Orchestrator success: code_quality_orchestrator ({orchestrator_duration:.3f}s)")
+        logger.info(
+            "Orchestrator success: code_quality_orchestrator (%.3fs)",
+            orchestrator_duration,
+        )
         _write_text(output_dir / "synthesis" / "final_answer.md", final_answer)
         _write_text(output_dir / "synthesis" / "consolidation_notes.md", notes)
 
         total_duration = perf_counter() - total_start
         timings["total"] = total_duration
-        _write_text(output_dir / "metrics" / "timings.json", json.dumps(timings, indent=2))
+        _write_text(
+            output_dir / "metrics" / "timings.json",
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "target_path": str(target_path),
+                    "system_prompt": str(system_prompt_path),
+                    "working_prompt": str(working_prompt_path),
+                    "timings": timings,
+                },
+                indent=2,
+            ),
+        )
 
-        _log_line(log_path, f"End: {datetime.utcnow().isoformat()}Z")
-        _log_line(log_path, f"Output root: {output_dir}")
+        logger.info("End")
+        logger.info("Output root: %s", output_dir)
         return 0
     except Exception:
-        _log_line(log_path, "Run failed with exception:")
-        _log_line(log_path, traceback.format_exc())
-        _log_line(log_path, f"End (failed): {datetime.utcnow().isoformat()}Z")
-        _log_line(log_path, f"Output root: {output_dir}")
+        logger.error("Run failed with exception:")
+        logger.error("%s", traceback.format_exc())
+        logger.info("End (failed)")
+        logger.info("Output root: %s", output_dir)
         return 1
 
 

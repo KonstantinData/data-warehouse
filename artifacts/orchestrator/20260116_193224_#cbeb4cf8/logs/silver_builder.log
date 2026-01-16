@@ -1,4 +1,0 @@
-[BUILDER] REPO_ROOT=D:\Git-GitHub\Repositories\data-warehouse
-[BUILDER] Using RUN_ID=20260116_193224_#cbeb4cf8
-[BUILDER] Generating Silver script from LLM...
-[BUILDER] Wrote load_2_silver_layer.py to: D:\Git-GitHub\Repositories\data-warehouse\src\runs\load_2_silver_layer.py

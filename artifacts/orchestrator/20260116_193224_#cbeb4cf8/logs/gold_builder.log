@@ -1,2 +1,0 @@
-[BUILDER] REPO_ROOT=D:\Git-GitHub\Repositories\data-warehouse
-Usage: load_3_gold_layer_builder_agent.py <run_id>

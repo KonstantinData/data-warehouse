@@ -1,0 +1,12 @@
+2026-01-16T23:18:30.860106Z | RUN_START | Gold run started
+2026-01-16T23:18:30.860106Z | RUN_METADATA | Gold run identifiers resolved
+2026-01-16T23:18:30.863953Z | RUN_PATHS | Resolved IO paths
+2026-01-16T23:18:31.010127Z | MART_BUILT | Built gold_dim_customer
+2026-01-16T23:18:31.026179Z | MART_BUILT | Built gold_dim_product
+2026-01-16T23:18:31.062747Z | MART_BUILT | Built gold_dim_location
+2026-01-16T23:18:31.187970Z | MART_BUILT | Built gold_fact_sales
+2026-01-16T23:18:31.284998Z | MART_BUILT | Built gold_agg_exec_kpis
+2026-01-16T23:18:31.371936Z | MART_BUILT | Built gold_agg_product_performance
+2026-01-16T23:18:31.471344Z | MART_BUILT | Built gold_agg_geo_performance
+2026-01-16T23:18:31.691192Z | MART_BUILT | Built gold_wide_sales_enriched
+2026-01-16T23:18:31.791830Z | RUN_END | Gold run completed

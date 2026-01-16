@@ -1,0 +1,555 @@
+{
+  "run_id": "20260116_231554_#3a8151e4",
+  "started_utc": "2026-01-16T23:15:54.232694Z",
+  "ended_utc": "2026-01-16T23:18:31.828446Z",
+  "duration_s": 157.595752,
+  "no_new_data": false,
+  "steps": {
+    "statuses": {
+      "bronze": "success",
+      "silver draft": "success",
+      "silver builder": "success",
+      "silver runner": "success",
+      "gold draft": "failed",
+      "gold builder": "failed",
+      "gold runner": "success"
+    },
+    "timings_s": {
+      "bronze": 0.5339777999906801,
+      "silver draft": 58.41775609998149,
+      "silver builder": 48.91042619998916,
+      "silver runner": 47.25900799999363,
+      "gold draft": 0.5619732999766711,
+      "gold builder": 0.5750157999864314,
+      "gold runner": 1.3137479000142775
+    },
+    "details": [
+      {
+        "name": "bronze",
+        "status": "success",
+        "started_utc": "2026-01-16T23:15:54.233197Z",
+        "ended_utc": "2026-01-16T23:15:54.766881Z",
+        "duration_s": 0.5339777999906801,
+        "return_code": 0,
+        "details": null,
+        "log_path": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\bronze.log"
+      },
+      {
+        "name": "silver draft",
+        "status": "success",
+        "started_utc": "2026-01-16T23:15:54.789920Z",
+        "ended_utc": "2026-01-16T23:16:53.207488Z",
+        "duration_s": 58.41775609998149,
+        "return_code": null,
+        "details": null,
+        "log_path": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\silver_draft.log"
+      },
+      {
+        "name": "silver builder",
+        "status": "success",
+        "started_utc": "2026-01-16T23:16:53.207488Z",
+        "ended_utc": "2026-01-16T23:17:42.117917Z",
+        "duration_s": 48.91042619998916,
+        "return_code": 0,
+        "details": null,
+        "log_path": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\silver_builder.log"
+      },
+      {
+        "name": "silver runner",
+        "status": "success",
+        "started_utc": "2026-01-16T23:17:42.117917Z",
+        "ended_utc": "2026-01-16T23:18:29.377028Z",
+        "duration_s": 47.25900799999363,
+        "return_code": 0,
+        "details": null,
+        "log_path": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\silver_runner.log"
+      },
+      {
+        "name": "gold draft",
+        "status": "failed",
+        "started_utc": "2026-01-16T23:18:29.377527Z",
+        "ended_utc": "2026-01-16T23:18:29.939363Z",
+        "duration_s": 0.5619732999766711,
+        "return_code": 1,
+        "details": "Command exited with code 1 (see D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\gold_draft.log)",
+        "log_path": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\gold_draft.log"
+      },
+      {
+        "name": "gold builder",
+        "status": "failed",
+        "started_utc": "2026-01-16T23:18:29.939363Z",
+        "ended_utc": "2026-01-16T23:18:30.514417Z",
+        "duration_s": 0.5750157999864314,
+        "return_code": 1,
+        "details": "Command exited with code 1 (see D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\gold_builder.log)",
+        "log_path": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\gold_builder.log"
+      },
+      {
+        "name": "gold runner",
+        "status": "success",
+        "started_utc": "2026-01-16T23:18:30.514417Z",
+        "ended_utc": "2026-01-16T23:18:31.827950Z",
+        "duration_s": 1.3137479000142775,
+        "return_code": 0,
+        "details": null,
+        "log_path": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\orchestrator\\20260116_231554_#3a8151e4\\logs\\gold_runner.log"
+      }
+    ]
+  },
+  "layers": {
+    "bronze": {
+      "run_id": "20260116_231554_#3a8151e4",
+      "status": "success",
+      "timings": {
+        "started_utc": "2026-01-16T23:15:54.559251Z",
+        "ended_utc": "2026-01-16T23:15:54.705813Z",
+        "duration_s": 0.146562
+      },
+      "paths": {
+        "root": "artifacts\\bronze\\20260116_231554_#3a8151e4",
+        "data_dir": "artifacts\\bronze\\20260116_231554_#3a8151e4\\data",
+        "metadata": "artifacts\\bronze\\20260116_231554_#3a8151e4\\data\\metadata.yaml",
+        "report_html": "artifacts\\bronze\\20260116_231554_#3a8151e4\\reports\\elt_report.html"
+      },
+      "row_counts": {
+        "files_total": 6,
+        "files_success": 6,
+        "files_skipped": 0,
+        "files_failed": 0,
+        "rows_total": 116294,
+        "rows_success": 116294
+      },
+      "schema_errors": [],
+      "dq_summary": null,
+      "metadata": {
+        "run": {
+          "run_id": "20260116_231554_#3a8151e4",
+          "layer": "bronze",
+          "pipeline": "elt_bronze",
+          "started_utc": "2026-01-16T23:15:54.559251Z",
+          "ended_utc": "2026-01-16T23:15:54.705813Z",
+          "duration_s": 0.146562
+        },
+        "env": {
+          "python": "3.12.6 (tags/v3.12.6:a4a2d2b, Sep  6 2024, 20:11:23) [MSC v.1940 64 bit (AMD64)]",
+          "pandas": "2.3.3",
+          "platform": "Windows-11-10.0.26200-SP0"
+        },
+        "sources": {
+          "crm_root": "raw\\source_crm",
+          "erp_root": "raw\\source_erp",
+          "crm_file_glob": "*.csv",
+          "crm_file_exclude": null,
+          "erp_file_glob": "*.csv",
+          "erp_file_exclude": null,
+          "crm_files": [
+            "cst_info.csv",
+            "prd_info.csv",
+            "sales_details.csv"
+          ],
+          "erp_files": [
+            "CST_AZ12.csv",
+            "LOC_A101.csv",
+            "PX_CAT_G1V2.csv"
+          ]
+        },
+        "tables": {
+          "cst_info.csv": {
+            "source_system": "CRM",
+            "source_path": "raw\\source_crm\\cst_info.csv",
+            "status": "SUCCESS",
+            "skip_reason": null,
+            "rows": 18494,
+            "schema": [
+              "cst_id",
+              "cst_key",
+              "cst_firstname",
+              "cst_lastname",
+              "cst_marital_status",
+              "cst_gndr",
+              "cst_create_date"
+            ],
+            "dtypes": {
+              "cst_id": "float64",
+              "cst_key": "object",
+              "cst_firstname": "object",
+              "cst_lastname": "object",
+              "cst_marital_status": "object",
+              "cst_gndr": "object",
+              "cst_create_date": "object"
+            },
+            "read_duration_s": 0.012991600000532344,
+            "copy_duration_s": 0.0011998999980278313,
+            "file_size_bytes": 855395,
+            "file_mtime_utc": "2025-02-19T15:22:34.040548Z",
+            "sha256": "5e00eca4351886386f6dd01beea91cb17ff081b97b9a02d295b84505448c8040",
+            "error_type": null,
+            "error_message": null,
+            "is_changed": true
+          },
+          "prd_info.csv": {
+            "source_system": "CRM",
+            "source_path": "raw\\source_crm\\prd_info.csv",
+            "status": "SUCCESS",
+            "skip_reason": null,
+            "rows": 397,
+            "schema": [
+              "prd_id",
+              "prd_key",
+              "prd_nm",
+              "prd_cost",
+              "prd_line",
+              "prd_start_dt",
+              "prd_end_dt"
+            ],
+            "dtypes": {
+              "prd_id": "int64",
+              "prd_key": "object",
+              "prd_nm": "object",
+              "prd_cost": "float64",
+              "prd_line": "object",
+              "prd_start_dt": "object",
+              "prd_end_dt": "object"
+            },
+            "read_duration_s": 0.0011525999871082604,
+            "copy_duration_s": 0.0005418999935500324,
+            "file_size_bytes": 26934,
+            "file_mtime_utc": "2025-02-19T15:22:34.041549Z",
+            "sha256": "3db1d644b424aa42599c5a00a8b1297b7b099367c180a63b141f91efac0de45b",
+            "error_type": null,
+            "error_message": null,
+            "is_changed": true
+          },
+          "sales_details.csv": {
+            "source_system": "CRM",
+            "source_path": "raw\\source_crm\\sales_details.csv",
+            "status": "SUCCESS",
+            "skip_reason": null,
+            "rows": 60398,
+            "schema": [
+              "sls_ord_num",
+              "sls_prd_key",
+              "sls_cust_id",
+              "sls_order_dt",
+              "sls_ship_dt",
+              "sls_due_dt",
+              "sls_sales",
+              "sls_quantity",
+              "sls_price"
+            ],
+            "dtypes": {
+              "sls_ord_num": "object",
+              "sls_prd_key": "object",
+              "sls_cust_id": "int64",
+              "sls_order_dt": "int64",
+              "sls_ship_dt": "int64",
+              "sls_due_dt": "int64",
+              "sls_sales": "float64",
+              "sls_quantity": "int64",
+              "sls_price": "float64"
+            },
+            "read_duration_s": 0.03038939999532886,
+            "copy_duration_s": 0.0016438999737147242,
+            "file_size_bytes": 3588116,
+            "file_mtime_utc": "2025-02-19T15:22:34.048555Z",
+            "sha256": "0a1e565ae2e8accec217819226d7b71104cc6075590172ed855617a8930a4369",
+            "error_type": null,
+            "error_message": null,
+            "is_changed": true
+          },
+          "CST_AZ12.csv": {
+            "source_system": "ERP",
+            "source_path": "raw\\source_erp\\CST_AZ12.csv",
+            "status": "SUCCESS",
+            "skip_reason": null,
+            "rows": 18484,
+            "schema": [
+              "CID",
+              "BDATE",
+              "GEN"
+            ],
+            "dtypes": {
+              "CID": "object",
+              "BDATE": "object",
+              "GEN": "object"
+            },
+            "read_duration_s": 0.007917400012956932,
+            "copy_duration_s": 0.0005956000240985304,
+            "file_size_bytes": 561549,
+            "file_mtime_utc": "2025-02-19T15:22:34.050548Z",
+            "sha256": "31b697a6a6022085e2f0b1a4d8fe55faae57a54a2d0c8ff91534253b8f3e64a0",
+            "error_type": null,
+            "error_message": null,
+            "is_changed": true
+          },
+          "LOC_A101.csv": {
+            "source_system": "ERP",
+            "source_path": "raw\\source_erp\\LOC_A101.csv",
+            "status": "SUCCESS",
+            "skip_reason": null,
+            "rows": 18484,
+            "schema": [
+              "CID",
+              "CNTRY"
+            ],
+            "dtypes": {
+              "CID": "object",
+              "CNTRY": "object"
+            },
+            "read_duration_s": 0.006127200002083555,
+            "copy_duration_s": 0.0005876000213902444,
+            "file_size_bytes": 402669,
+            "file_mtime_utc": "2025-02-19T15:22:34.051548Z",
+            "sha256": "d46239d31bfa3a78e8a6cc8ee97a51e914b2db2db460bfb79a3aeadaf8e028c0",
+            "error_type": null,
+            "error_message": null,
+            "is_changed": true
+          },
+          "PX_CAT_G1V2.csv": {
+            "source_system": "ERP",
+            "source_path": "raw\\source_erp\\PX_CAT_G1V2.csv",
+            "status": "SUCCESS",
+            "skip_reason": null,
+            "rows": 37,
+            "schema": [
+              "ID",
+              "CAT",
+              "SUBCAT",
+              "MAINTENANCE"
+            ],
+            "dtypes": {
+              "ID": "object",
+              "CAT": "object",
+              "SUBCAT": "object",
+              "MAINTENANCE": "object"
+            },
+            "read_duration_s": 0.0005493999924510717,
+            "copy_duration_s": 0.0012035999970976263,
+            "file_size_bytes": 1169,
+            "file_mtime_utc": "2025-02-19T15:22:34.051548Z",
+            "sha256": "ef8048319a2cc23907fc6caf215d31cca5e0bf908590fd6bd7dfa81b48ac9743",
+            "error_type": null,
+            "error_message": null,
+            "is_changed": true
+          }
+        },
+        "summary": {
+          "files_total": 6,
+          "files_success": 6,
+          "files_skipped": 0,
+          "files_failed": 0,
+          "has_new_data": true
+        }
+      }
+    },
+    "silver": {
+      "run_id": "20260116_231742_#3a8151e4",
+      "status": "missing",
+      "paths": {
+        "root": "artifacts\\silver\\20260116_231742_#3a8151e4",
+        "data_dir": "artifacts\\silver\\20260116_231742_#3a8151e4\\data",
+        "metadata": "artifacts\\silver\\20260116_231742_#3a8151e4\\metadata.yaml",
+        "report_html": "artifacts\\silver\\20260116_231742_#3a8151e4\\reports\\elt_report.html"
+      }
+    },
+    "gold": {
+      "run_id": "20260116_231554_#3a8151e4",
+      "status": "success",
+      "timings": {
+        "started_utc": "2026-01-16T23:18:30.859106Z",
+        "ended_utc": "2026-01-16T23:18:31.691192Z",
+        "duration_s": 0.832086
+      },
+      "paths": {
+        "root": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4",
+        "data_dir": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data",
+        "metadata": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\metadata.yaml",
+        "report_html": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\reports\\gold_report.html"
+      },
+      "row_counts": {
+        "outputs_total": 8,
+        "rows_total": 158065
+      },
+      "schema_errors": [],
+      "dq_summary": null,
+      "metadata": {
+        "run": {
+          "layer": "gold",
+          "pipeline": "load_3_gold_layer",
+          "pipeline_version": "1.1.0",
+          "run_id": "20260116_231554_#3a8151e4",
+          "started_utc": "2026-01-16T23:18:30.859106Z",
+          "ended_utc": "2026-01-16T23:18:31.691192Z",
+          "duration_s": 0.832086,
+          "status": "success"
+        },
+        "env": {
+          "python": "3.12.6 (tags/v3.12.6:a4a2d2b, Sep  6 2024, 20:11:23) [MSC v.1940 64 bit (AMD64)]",
+          "pandas": "2.3.3",
+          "platform": "Windows-11-10.0.26200-SP0"
+        },
+        "source": {
+          "silver_run_id": "20260116_231742_#3a8151e4",
+          "silver_data_dir": "D:\\Git-GitHub\\Repositories\\data-warehouse\\artifacts\\silver\\20260116_231742_#3a8151e4\\data",
+          "suffix": "3a8151e4"
+        },
+        "metrics": {
+          "outputs_count": 8,
+          "errors_count": 0,
+          "duration_s": 0.8320384999969974
+        },
+        "outputs": [
+          {
+            "name": "gold_dim_customer",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_dim_customer.csv",
+            "rows": 18485,
+            "schema": [
+              "cst_id",
+              "cst_key",
+              "cst_firstname",
+              "cst_lastname",
+              "cst_marital_status",
+              "cst_gndr",
+              "cst_create_date",
+              "CID",
+              "BDATE",
+              "GEN",
+              "CNTRY"
+            ],
+            "sha256": "6677e7650a7d9475040c1f297fdb31e1983dd19770188989b653ac62812df743",
+            "duration_s": 0.03151970001636073
+          },
+          {
+            "name": "gold_dim_product",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_dim_product.csv",
+            "rows": 295,
+            "schema": [
+              "prd_id",
+              "prd_key",
+              "prd_nm",
+              "prd_cost",
+              "prd_line",
+              "prd_start_dt",
+              "prd_end_dt",
+              "ID",
+              "CAT",
+              "SUBCAT",
+              "MAINTENANCE"
+            ],
+            "sha256": "6511d2fde9fffc127aa5b2ead035f2fd5a167cd212afc636a63cb7bb1a3dcee4",
+            "duration_s": 0.0010583999974187464
+          },
+          {
+            "name": "gold_dim_location",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_dim_location.csv",
+            "rows": 18484,
+            "schema": [
+              "CID",
+              "CNTRY"
+            ],
+            "sha256": "6d90e5bc8d3fc9e5dbaab8dd46f06d2783a116cd427e0d80aa6ec77c6f73f39c",
+            "duration_s": 0.006813600019086152
+          },
+          {
+            "name": "gold_fact_sales",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_fact_sales.csv",
+            "rows": 60398,
+            "schema": [
+              "sls_ord_num",
+              "sls_prd_key",
+              "sls_cust_id",
+              "sls_sales",
+              "sls_quantity",
+              "sls_price",
+              "sls_order_dt",
+              "sls_ship_dt",
+              "sls_due_dt"
+            ],
+            "sha256": "5ee0aebfe3d7617daccaf2be31a5a61d6f16a7b173925f7d8f419da147fc3d68",
+            "duration_s": 0.09574859999702312
+          },
+          {
+            "name": "gold_agg_exec_kpis",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_agg_exec_kpis.csv",
+            "rows": 3,
+            "schema": [
+              "period",
+              "customer_segment",
+              "Conversion Rate",
+              "Customer Lifetime Value",
+              "Return Rate",
+              "Average Order Value",
+              "Customer Retention Rate"
+            ],
+            "sha256": "e2ebd32413ef8ad86a085a9769c313d26fe58f019e71c2de140457916f18164e",
+            "duration_s": 0.0007200999825727195
+          },
+          {
+            "name": "gold_agg_product_performance",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_agg_product_performance.csv",
+            "rows": 1,
+            "schema": [
+              "prd_id",
+              "period",
+              "prd_line",
+              "CAT",
+              "SUBCAT",
+              "Total_Sales",
+              "Total_Quantity_Sold",
+              "Return Rate"
+            ],
+            "sha256": "fafbcf5f80a5271f6b4dc7c95deaefec11fba7ab74fe27e5cdc3d73244fd7b75",
+            "duration_s": 0.004452900000615045
+          },
+          {
+            "name": "gold_agg_geo_performance",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_agg_geo_performance.csv",
+            "rows": 1,
+            "schema": [
+              "CNTRY",
+              "CAT",
+              "period",
+              "Total_Sales",
+              "Total_Quantity_Sold"
+            ],
+            "sha256": "f42a7f5f954b17361fdc84140792ba70ca44888b53f87c0d3d953e15405fccc6",
+            "duration_s": 0.0007014000148046762
+          },
+          {
+            "name": "gold_wide_sales_enriched",
+            "path": "artifacts\\gold\\marts\\20260116_231554_#3a8151e4\\data\\gold_wide_sales_enriched.csv",
+            "rows": 60398,
+            "schema": [
+              "sls_ord_num",
+              "sls_prd_key",
+              "sls_cust_id",
+              "sls_sales",
+              "sls_quantity",
+              "sls_price",
+              "cst_id",
+              "cst_key",
+              "cst_marital_status",
+              "cst_gndr",
+              "BDATE",
+              "GEN",
+              "CNTRY",
+              "prd_id",
+              "prd_key",
+              "prd_nm",
+              "prd_line",
+              "CAT",
+              "SUBCAT"
+            ],
+            "sha256": "c76becb259b9cd0dd832355a5cfdb88c1c0f719025aef3a195c86d09eb09e814",
+            "duration_s": 0.14303549999021925
+          }
+        ],
+        "errors": [],
+        "notes": [
+          "Gold marts built based on Silver sales, product, customer, demographic, and location data, where available. Date fields converted to ISO format where appropriate. Return Rate KPIs set to None due to lack of returns data."
+        ]
+      }
+    }
+  },
+  "token_usage": null
+}

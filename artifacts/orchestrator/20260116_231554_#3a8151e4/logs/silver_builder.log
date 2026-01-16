@@ -1,0 +1,5 @@
+{"level":"INFO","message":"[BUILDER] REPO_ROOT=D:\Git-GitHub\Repositories\data-warehouse"}
+{"level":"INFO","message":"[BUILDER] Using RUN_ID=20260116_231554_#3a8151e4"}
+{"level":"INFO","message":"[BUILDER] Generating Silver script from LLM..."}
+{"level":"INFO","message":"HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK""}
+{"level":"INFO","message":"[BUILDER] Wrote load_2_silver_layer.py to: D:\Git-GitHub\Repositories\data-warehouse\src\runs\load_2_silver_layer.py"}

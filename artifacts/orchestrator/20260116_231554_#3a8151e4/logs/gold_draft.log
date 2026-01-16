@@ -1,0 +1,18 @@
+2026-01-17 00:18:29,899 ERROR __main__ - Gold-layer planning failed with unexpected error.
+Traceback (most recent call last):
+  File "D:\Git-GitHub\Repositories\data-warehouse\src\agents\load_3_gold_layer_draft_agent.py", line 222, in resolve_silver_context_run_id
+    fallback_run_id = find_latest_silver_run_id(silver_root, require_agent_context=True)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Git-GitHub\Repositories\data-warehouse\src\agents\load_3_gold_layer_draft_agent.py", line 150, in find_latest_silver_run_id
+    raise FileNotFoundError(f"No Silver runs found under: {silver_root}")
+FileNotFoundError: No Silver runs found under: D:\Git-GitHub\Repositories\data-warehouse\artifacts\silver
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Git-GitHub\Repositories\data-warehouse\src\agents\load_3_gold_layer_draft_agent.py", line 704, in main
+    silver_run_id = resolve_silver_context_run_id(silver_root, silver_run_id)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Git-GitHub\Repositories\data-warehouse\src\agents\load_3_gold_layer_draft_agent.py", line 224, in resolve_silver_context_run_id
+    raise FileNotFoundError(
+FileNotFoundError: No Silver runs with silver_run_agent_context.json found under: D:\Git-GitHub\Repositories\data-warehouse\artifacts\silver

@@ -364,13 +364,13 @@ def main() -> int:
                     sys.executable,
                     str(repo_root / "src" / "agents" / "load_2_silver_layer_builder_agent.py"),
                 ]
-                builder_env = env.copy()
-                builder_env["SKIP_RUNNER_EXECUTION"] = "1"
+                if bronze_run_id:
+                    silver_builder_cmd.append(bronze_run_id)
                 step_results.append(
                     run_subprocess_step(
                         name="silver builder",
                         cmd=silver_builder_cmd,
-                        env=builder_env,
+                        env=env,
                         cwd=repo_root,
                         log_dir=log_dir,
                     )

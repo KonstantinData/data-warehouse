@@ -3,20 +3,18 @@ load_2_silver_layer_builder_agent.py
 
 ROLE:
 - Builds the final Silver ETL script using:
-    (1) latest silver_run_agent_context.json in artifacts/tmp/draft_reports/silver/<run_id>
-    (2) latest silver_run_human_report.md in artifacts/tmp/draft_reports/silver/<run_id>
+    (1) silver_run_agent_context.json in tmp/draft_reports/silver/<run_id>
+    (2) silver_run_human_report.md in tmp/draft_reports/silver/<run_id>
     (3) src/templates/load_2_silver_layer_template.py
 
-- Generates a new src/runs/load_2_silver_layer.py based on LLM reasoning
+- Generates a new src/runs/load_2_silver_layer.py deterministically
 - ALWAYS overwrites the script
-- Executes the script automatically with the correct bronze_run_id
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -36,13 +34,6 @@ def find_repo_root(start: Path) -> Path:
             return cur
         cur = cur.parent
     return start.resolve()
-
-
-def find_latest_bronze_run_id(bronze_root: Path) -> str:
-    run_ids = [p.name for p in bronze_root.iterdir() if p.is_dir()]
-    if not run_ids:
-        raise FileNotFoundError("No Bronze runs found!")
-    return sorted(run_ids)[-1]
 
 
 def read_text(path: Path) -> str:
@@ -123,7 +114,10 @@ def generate_silver_script(
     response = client.chat.completions.create(
         model=model_name,
         messages=[system_msg, user_msg],
-        temperature=0.1,
+        temperature=0,
+        top_p=1,
+        frequency_penalty=0,
+        presence_penalty=0,
     )
 
     raw = response.choices[0].message.content
@@ -138,17 +132,13 @@ def main() -> int:
     repo_root = find_repo_root(Path(__file__).resolve())
     print(f"[BUILDER] REPO_ROOT={repo_root}")
 
-    bronze_root = repo_root / "artifacts" / "bronze"
+    if len(sys.argv) < 2:
+        raise SystemExit("Usage: load_2_silver_layer_builder_agent.py <run_id>")
 
-    # Silver Run ID
-    if len(sys.argv) > 1:
-        bronze_run_id = sys.argv[1]
-    else:
-        bronze_run_id = find_latest_bronze_run_id(bronze_root)
+    run_id = sys.argv[1]
+    print(f"[BUILDER] Using RUN_ID={run_id}")
 
-    print(f"[BUILDER] Using BRONZE_RUN_ID={bronze_run_id}")
-
-    report_dir = repo_root / "artifacts" / "tmp" / "draft_reports" / "silver" / bronze_run_id
+    report_dir = repo_root / "tmp" / "draft_reports" / "silver" / run_id
     context_path = report_dir / "silver_run_agent_context.json"
     human_report_path = report_dir / "silver_run_human_report.md"
 
@@ -167,7 +157,7 @@ def main() -> int:
     python_code = generate_silver_script(
         client=client,
         template_text=template_text,
-        agent_context=agent_context,
+        agent_context=json.loads(json.dumps(agent_context, sort_keys=True)),
         human_report_md=human_report_md,
     )
 
@@ -175,19 +165,7 @@ def main() -> int:
     runner_path = repo_root / "src" / "runs" / "load_2_silver_layer.py"
     runner_path.write_text(python_code, encoding="utf-8")
     print(f"[BUILDER] Wrote load_2_silver_layer.py to: {runner_path}")
-
-    # Execute script
-    if os.getenv("SKIP_RUNNER_EXECUTION") == "1":
-        print("[BUILDER] SKIP_RUNNER_EXECUTION=1 set; skipping runner execution.")
-        return 0
-
-    bronze_run_id = agent_context.get("bronze_run_id") or bronze_run_id
-    cmd = [sys.executable, str(runner_path), bronze_run_id]
-    print(f"[BUILDER] Executing generated Silver ETL script with cmd: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=repo_root)
-    print(f"[BUILDER] Script exited with code: {result.returncode}")
-
-    return result.returncode
+    return 0
 
 
 if __name__ == "__main__":

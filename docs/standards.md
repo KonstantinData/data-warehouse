@@ -1,1 +1,0 @@
-# Naming and Coding Standards

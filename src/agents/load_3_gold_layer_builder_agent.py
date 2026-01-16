@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import yaml
 from dotenv import load_dotenv
@@ -37,6 +38,28 @@ def find_repo_root(start: Path) -> Path:
             return cur
         cur = cur.parent
     return start.resolve()
+
+
+RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[A-Za-z0-9]+)$")
+
+
+def find_latest_silver_run_id(silver_root: Path) -> str:
+    if not silver_root.exists():
+        raise FileNotFoundError(f"Silver root does not exist: {silver_root}")
+
+    run_ids: List[str] = []
+    for p in silver_root.iterdir():
+        if p.is_dir() and RUN_ID_RE.match(p.name):
+            run_ids.append(p.name)
+
+    if not run_ids:
+        raise FileNotFoundError(f"No Silver runs found under: {silver_root}")
+
+    return sorted(run_ids)[-1]
+
+
+def resolve_silver_run_id(silver_root: Path, requested_run_id: str | None) -> str:
+    return requested_run_id or find_latest_silver_run_id(silver_root)
 
 
 def read_text(path: Path) -> str:
@@ -147,10 +170,7 @@ def main() -> int:
 
     silver_root = repo_root / "artifacts" / "silver"
 
-    if len(sys.argv) < 2:
-        raise SystemExit("Usage: load_3_gold_layer_builder_agent.py <run_id>")
-
-    silver_run_id = sys.argv[1]
+    silver_run_id = resolve_silver_run_id(silver_root, sys.argv[1] if len(sys.argv) > 1 else None)
     print(f"[BUILDER] Using SILVER_RUN_ID={silver_run_id}")
 
     silver_run_dir = silver_root / silver_run_id

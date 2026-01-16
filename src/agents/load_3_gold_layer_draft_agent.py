@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -49,7 +50,20 @@ def find_repo_root(start: Path) -> Path:
     return start.resolve().parents[2]
 
 
-def find_latest_silver_run_id(silver_root: Path) -> str:
+RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[A-Za-z0-9]+)$")
+
+
+def extract_run_suffix(run_id: str) -> str | None:
+    match = RUN_ID_RE.match(run_id)
+    return match.group("suffix") if match else None
+
+
+def find_latest_silver_run_id(
+    silver_root: Path,
+    *,
+    suffix: str | None = None,
+    require_agent_context: bool = False,
+) -> str:
     """
     Return the lexicographically latest directory name under silver_root.
     Assumes run_id pattern YYYYMMDD_HHMMSS_#suffix, so lexicographic
@@ -60,8 +74,15 @@ def find_latest_silver_run_id(silver_root: Path) -> str:
 
     run_ids: List[str] = []
     for p in silver_root.iterdir():
-        if p.is_dir():
-            run_ids.append(p.name)
+        if not p.is_dir():
+            continue
+        if not RUN_ID_RE.match(p.name):
+            continue
+        if suffix and extract_run_suffix(p.name) != suffix:
+            continue
+        if require_agent_context and not (p / "reports" / "silver_run_agent_context.json").exists():
+            continue
+        run_ids.append(p.name)
 
     if not run_ids:
         raise FileNotFoundError(f"No Silver runs found under: {silver_root}")
@@ -82,6 +103,49 @@ def read_json(path: Path) -> Dict[str, Any]:
 def read_yaml(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def resolve_silver_run_id(silver_root: Path, requested_run_id: str | None) -> str:
+    if requested_run_id:
+        return requested_run_id
+    return find_latest_silver_run_id(silver_root)
+
+
+def resolve_silver_context_run_id(silver_root: Path, silver_run_id: str) -> str:
+    agent_ctx_path = silver_root / silver_run_id / "reports" / "silver_run_agent_context.json"
+    if agent_ctx_path.exists():
+        return silver_run_id
+
+    suffix = extract_run_suffix(silver_run_id)
+    if suffix:
+        try:
+            fallback_run_id = find_latest_silver_run_id(
+                silver_root,
+                suffix=suffix,
+                require_agent_context=True,
+            )
+        except FileNotFoundError:
+            fallback_run_id = None
+        if fallback_run_id:
+            print(
+                "[PLANNING] Requested Silver run missing context; "
+                f"falling back to latest run with suffix #{suffix}: {fallback_run_id}"
+            )
+            return fallback_run_id
+
+    try:
+        fallback_run_id = find_latest_silver_run_id(silver_root, require_agent_context=True)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            "No Silver runs with silver_run_agent_context.json found under: "
+            f"{silver_root}"
+        ) from exc
+
+    print(
+        "[PLANNING] Requested Silver run missing context; "
+        f"falling back to latest run with available context: {fallback_run_id}"
+    )
+    return fallback_run_id
 
 
 # ---------------------------------------------------------------------
@@ -424,10 +488,9 @@ def main() -> int:
     planning_root = repo_root / "tmp" / "draft_reports" / "gold"
 
     # Determine which Silver run to use
-    if len(sys.argv) > 1:
-        silver_run_id = sys.argv[1]
-    else:
-        silver_run_id = find_latest_silver_run_id(silver_root)
+    requested_run_id = sys.argv[1] if len(sys.argv) > 1 else None
+    silver_run_id = resolve_silver_run_id(silver_root, requested_run_id)
+    silver_run_id = resolve_silver_context_run_id(silver_root, silver_run_id)
 
     silver_run_dir = silver_root / silver_run_id
 

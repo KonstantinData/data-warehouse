@@ -389,6 +389,8 @@ def main() -> int:
                         sys.executable,
                         str(repo_root / "src" / "agents" / "load_3_gold_layer_builder_agent.py"),
                     ]
+                    if silver_run_id:
+                        gold_builder_cmd.append(silver_run_id)
                     builder_env = env.copy()
                     builder_env["SKIP_RUNNER_EXECUTION"] = "1"
                     step_results.append(

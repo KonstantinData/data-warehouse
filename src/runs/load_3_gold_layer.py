@@ -15,14 +15,16 @@ and behaves as documented below.
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
 import platform
 import re
 import sys
-import traceback
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import yaml
@@ -104,6 +106,36 @@ GOLD_MART_PLAN (injected by agent):
 """
 
 RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[0-9a-fA-F]{6,32})$")
+PIPELINE_VERSION = "1.1.0"
+MAX_IO_ATTEMPTS = 3
+IO_BACKOFF_S = 0.5
+
+REQUIRED_SCHEMAS: Dict[str, Tuple[str, ...]] = {
+    "sales_details.csv": (
+        "sls_ord_num",
+        "sls_prd_key",
+        "sls_cust_id",
+        "sls_sales",
+        "sls_quantity",
+        "sls_price",
+        "sls_order_dt",
+        "sls_ship_dt",
+        "sls_due_dt",
+    ),
+    "prd_info.csv": ("prd_key", "prd_nm", "prd_cost", "prd_line", "prd_start_dt", "prd_end_dt"),
+    "PX_CAT_G1V2.csv": ("ID", "CAT", "SUBCAT", "MAINTENANCE"),
+    "cst_info.csv": (
+        "cst_id",
+        "cst_key",
+        "cst_firstname",
+        "cst_lastname",
+        "cst_marital_status",
+        "cst_gndr",
+        "cst_create_date",
+    ),
+    "CST_AZ12.csv": ("CID", "BDATE", "GEN"),
+    "LOC_A101.csv": ("CID", "CNTRY"),
+}
 
 
 HTML_REPORT_TEMPLATE = """
@@ -179,8 +211,15 @@ def resolve_silver_root(repo_root: Path) -> Path:
       artifacts/silver/<run_id>/
     But we support legacy/fallbacks.
     """
+    override = os.environ.get("SILVER_ROOT_OVERRIDE")
+    if override:
+        candidate = Path(override).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+        raise FileNotFoundError(f"SILVER_ROOT_OVERRIDE does not exist or is not a directory: {candidate}")
+
     candidates = [
-        repo_root / "artifacts" / "silver",          # PREFERRED
+        repo_root / "artifacts" / "silver",  # PREFERRED
         repo_root / "artifacts" / "silver" / "elt",  # legacy
         repo_root / "artifacts" / "silver" / "runs",
         repo_root / "artifacts" / "sylver" / "runs",  # legacy spelling
@@ -194,35 +233,85 @@ def resolve_silver_root(repo_root: Path) -> Path:
 
 
 SILVER_ROOT = resolve_silver_root(REPO_ROOT)
-GOLD_ROOT = REPO_ROOT / "artifacts" / "gold" / "marts"
+GOLD_ROOT = Path(os.environ.get("GOLD_ROOT_OVERRIDE", str(REPO_ROOT / "artifacts" / "gold" / "marts"))).expanduser()
 
 
 # -----------------------------
 # IO helpers
 # -----------------------------
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": iso_utc(utc_now()),
+            "level": record.levelname,
+            "message": record.getMessage(),
+        }
+        event = getattr(record, "event", None)
+        context = getattr(record, "context", None)
+        if event:
+            payload["event"] = event
+        if context:
+            payload["context"] = context
+        if record.exc_info:
+            exc_type = record.exc_info[0].__name__ if record.exc_info[0] else "Exception"
+            payload["exception"] = {"type": exc_type, "message": str(record.exc_info[1])}
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def build_logger(log_path: Path) -> logging.Logger:
+    logger = logging.getLogger(f"gold_runner_{log_path}")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(JsonFormatter())
+    logger.addHandler(handler)
+    logger.propagate = False
+    return logger
+
+
+def log_event(logger: logging.Logger, event: str, message: str, context: Optional[Dict[str, Any]] = None) -> None:
+    logger.info(message, extra={"event": event, "context": context or {}})
+    print(f"{iso_utc(utc_now())} | {event} | {message}")
+
+
+def with_retry(action: Callable[[], Any], *, attempts: int = MAX_IO_ATTEMPTS, backoff_s: float = IO_BACKOFF_S) -> Any:
+    for attempt in range(1, attempts + 1):
+        try:
+            return action()
+        except (OSError, IOError) as exc:
+            if attempt == attempts:
+                raise
+            time.sleep(backoff_s * attempt)
+
+
 def ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            b = f.read(chunk_size)
-            if not b:
-                break
-            h.update(b)
+    def _read() -> None:
+        with open(path, "rb") as f:
+            while True:
+                b = f.read(chunk_size)
+                if not b:
+                    break
+                h.update(b)
+
+    with_retry(_read)
     return h.hexdigest()
 
 
 def write_yaml(obj: Dict[str, Any], path: Path) -> None:
-    path.write_text(yaml.safe_dump(obj, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    data = yaml.safe_dump(obj, sort_keys=False, allow_unicode=True)
+    with_retry(lambda: path.write_text(data, encoding="utf-8"))
 
 
 def write_html(report_ctx: Dict[str, Any], path: Path) -> None:
     from jinja2 import Template
 
-    path.write_text(Template(HTML_REPORT_TEMPLATE).render(**report_ctx), encoding="utf-8")
+    rendered = Template(HTML_REPORT_TEMPLATE).render(**report_ctx)
+    with_retry(lambda: path.write_text(rendered, encoding="utf-8"))
 
 
 def find_latest_run_id(root: Path) -> str:
@@ -277,25 +366,40 @@ def load_csv(folder: Path, filename: str) -> Optional[pd.DataFrame]:
     p = folder / filename
     if not p.exists():
         return None
-    return pd.read_csv(p)
+    return with_retry(lambda: pd.read_csv(p))
+
+
+def write_csv(df: pd.DataFrame, path: Path) -> None:
+    with_retry(lambda: df.to_csv(path, index=False))
+
+
+def validate_required_columns(
+    df: pd.DataFrame,
+    required: Sequence[str],
+    table_name: str,
+) -> List[str]:
+    missing = [col for col in required if col not in df.columns]
+    return [f"{table_name} missing columns: {missing}"] if missing else []
 
 
 # -----------------------------
 # GOLD_MART_PLAN handling
 # -----------------------------
-def mart_enabled(mart_name: str) -> bool:
-    """
-    Decide whether a mart should be built based on GOLD_MART_PLAN,
-    which is injected by the agent as a global variable.
-
-    If GOLD_MART_PLAN is missing or invalid, all marts are treated as enabled.
-    """
+def get_mart_plan() -> Optional[Dict[str, Any]]:
     try:
         plan = GOLD_MART_PLAN  # type: ignore[name-defined]
     except NameError:
-        return True
+        return None
+    return plan if isinstance(plan, dict) else None
 
-    if not isinstance(plan, dict):
+
+def mart_enabled(mart_name: str, plan: Optional[Dict[str, Any]]) -> bool:
+    """
+    Decide whether a mart should be built based on GOLD_MART_PLAN.
+
+    If GOLD_MART_PLAN is missing or invalid, all marts are treated as enabled.
+    """
+    if not plan:
         return True
 
     mart_list = plan.get("mart_list")
@@ -775,6 +879,7 @@ def main() -> int:
     silver_data_dir = resolve_silver_data_dir(silver_run_id)
 
     start_dt = utc_now()
+    perf_start = time.perf_counter()
     requested_run_id = None
     if len(sys.argv) > 2:
         requested_run_id = sys.argv[2]
@@ -799,14 +904,8 @@ def main() -> int:
     ensure_dir(reports_dir)
 
     run_log_path = gold_dir / "run_log.txt"
-
-    def log(msg: str) -> None:
-        line = f"{iso_utc(utc_now())} | {msg}"
-        print(line)
-        if run_log_path.exists():
-            run_log_path.write_text(run_log_path.read_text(encoding="utf-8") + line + "\n", encoding="utf-8")
-        else:
-            run_log_path.write_text(line + "\n", encoding="utf-8")
+    logger = build_logger(run_log_path)
+    mart_plan = get_mart_plan()
 
     outputs: List[Dict[str, Any]] = []
     errors: List[str] = []
@@ -814,13 +913,16 @@ def main() -> int:
     if requested_run_id and not RUN_ID_RE.match(requested_run_id):
         notes.append(f"Requested run_id '{requested_run_id}' did not match expected format; generated run_id used instead.")
 
-    log("RUN_START")
-    log(f"silver_run_id={silver_run_id}")
-    log(f"gold_run_id={gold_run_id}")
-    log(f"gold_run_id_source={run_id_source}")
-    log(f"REPO_ROOT={REPO_ROOT}")
-    log(f"SILVER_DATA_DIR={silver_data_dir}")
-    log(f"GOLD_DIR={gold_dir}")
+    log_event(logger, "RUN_START", "Gold run started", {"silver_run_id": silver_run_id})
+    log_event(logger, "RUN_METADATA", "Gold run identifiers resolved", {"gold_run_id": gold_run_id, "run_id_source": run_id_source})
+    log_event(
+        logger,
+        "RUN_PATHS",
+        "Resolved IO paths",
+        {"repo_root": str(REPO_ROOT), "silver_data_dir": str(silver_data_dir), "gold_dir": str(gold_dir)},
+    )
+    if mart_plan:
+        log_event(logger, "MART_PLAN", "Loaded mart plan configuration", {"marts": mart_plan.get("mart_list", [])})
 
     try:
         # Load all required silver tables
@@ -831,14 +933,36 @@ def main() -> int:
         cst_az12 = load_csv(silver_data_dir, "CST_AZ12.csv")
         loc = load_csv(silver_data_dir, "LOC_A101.csv")
 
+        for name, df in [
+            ("sales_details.csv", sales),
+            ("prd_info.csv", prd_info),
+            ("PX_CAT_G1V2.csv", px_cat),
+            ("cst_info.csv", cst_info),
+            ("CST_AZ12.csv", cst_az12),
+            ("LOC_A101.csv", loc),
+        ]:
+            if df is None:
+                continue
+            required = REQUIRED_SCHEMAS.get(name)
+            if required:
+                schema_errors = validate_required_columns(df, required, name)
+                if schema_errors:
+                    raise ValueError("; ".join(schema_errors))
+
         # 1) gold_dim_customer
-        if mart_enabled("gold_dim_customer"):
+        if mart_enabled("gold_dim_customer", mart_plan):
             try:
                 if cst_info is None:
                     raise FileNotFoundError("cst_info.csv is required for gold_dim_customer")
+                if REQUIRED_SCHEMAS.get("cst_info.csv"):
+                    schema_errors = validate_required_columns(cst_info, REQUIRED_SCHEMAS["cst_info.csv"], "cst_info.csv")
+                    if schema_errors:
+                        raise ValueError("; ".join(schema_errors))
                 dim_customer = build_gold_dim_customer(cst_info, cst_az12, loc)
                 out = data_dir / "gold_dim_customer.csv"
-                dim_customer.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(dim_customer, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_dim_customer",
@@ -846,24 +970,31 @@ def main() -> int:
                         "rows": int(len(dim_customer)),
                         "schema": list(dim_customer.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_dim_customer rows={len(dim_customer)}")
+                log_event(logger, "MART_BUILT", "Built gold_dim_customer", {"rows": len(dim_customer), "duration_s": duration})
             except Exception as e:
-                msg = f"Failed gold_dim_customer: {e}"
+                msg = f"Failed gold_dim_customer: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_dim_customer"}})
         else:
             dim_customer = None
 
         # 2) gold_dim_product
-        if mart_enabled("gold_dim_product"):
+        if mart_enabled("gold_dim_product", mart_plan):
             try:
                 if prd_info is None:
                     raise FileNotFoundError("prd_info.csv is required for gold_dim_product")
+                if REQUIRED_SCHEMAS.get("prd_info.csv"):
+                    schema_errors = validate_required_columns(prd_info, REQUIRED_SCHEMAS["prd_info.csv"], "prd_info.csv")
+                    if schema_errors:
+                        raise ValueError("; ".join(schema_errors))
                 dim_product = build_gold_dim_product(prd_info, px_cat)
                 out = data_dir / "gold_dim_product.csv"
-                dim_product.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(dim_product, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_dim_product",
@@ -871,24 +1002,31 @@ def main() -> int:
                         "rows": int(len(dim_product)),
                         "schema": list(dim_product.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_dim_product rows={len(dim_product)}")
+                log_event(logger, "MART_BUILT", "Built gold_dim_product", {"rows": len(dim_product), "duration_s": duration})
             except Exception as e:
-                msg = f"Failed gold_dim_product: {e}"
+                msg = f"Failed gold_dim_product: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_dim_product"}})
         else:
             dim_product = None
 
         # 3) gold_dim_location
-        if mart_enabled("gold_dim_location"):
+        if mart_enabled("gold_dim_location", mart_plan):
             try:
                 if loc is None:
                     raise FileNotFoundError("LOC_A101.csv is required for gold_dim_location")
+                if REQUIRED_SCHEMAS.get("LOC_A101.csv"):
+                    schema_errors = validate_required_columns(loc, REQUIRED_SCHEMAS["LOC_A101.csv"], "LOC_A101.csv")
+                    if schema_errors:
+                        raise ValueError("; ".join(schema_errors))
                 dim_location = build_gold_dim_location(loc)
                 out = data_dir / "gold_dim_location.csv"
-                dim_location.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(dim_location, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_dim_location",
@@ -896,24 +1034,35 @@ def main() -> int:
                         "rows": int(len(dim_location)),
                         "schema": list(dim_location.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_dim_location rows={len(dim_location)}")
+                log_event(logger, "MART_BUILT", "Built gold_dim_location", {"rows": len(dim_location), "duration_s": duration})
             except Exception as e:
-                msg = f"Failed gold_dim_location: {e}"
+                msg = f"Failed gold_dim_location: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_dim_location"}})
         else:
             dim_location = None
 
         # 4) gold_fact_sales
-        if mart_enabled("gold_fact_sales"):
+        if mart_enabled("gold_fact_sales", mart_plan):
             try:
                 if sales is None:
                     raise FileNotFoundError("sales_details.csv is required for gold_fact_sales")
+                if REQUIRED_SCHEMAS.get("sales_details.csv"):
+                    schema_errors = validate_required_columns(
+                        sales,
+                        REQUIRED_SCHEMAS["sales_details.csv"],
+                        "sales_details.csv",
+                    )
+                    if schema_errors:
+                        raise ValueError("; ".join(schema_errors))
                 fact_sales = build_gold_fact_sales(sales)
                 out = data_dir / "gold_fact_sales.csv"
-                fact_sales.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(fact_sales, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_fact_sales",
@@ -921,24 +1070,27 @@ def main() -> int:
                         "rows": int(len(fact_sales)),
                         "schema": list(fact_sales.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_fact_sales rows={len(fact_sales)}")
+                log_event(logger, "MART_BUILT", "Built gold_fact_sales", {"rows": len(fact_sales), "duration_s": duration})
             except Exception as e:
-                msg = f"Failed gold_fact_sales: {e}"
+                msg = f"Failed gold_fact_sales: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_fact_sales"}})
         else:
             fact_sales = None
 
         # 5) gold_agg_exec_kpis
-        if mart_enabled("gold_agg_exec_kpis"):
+        if mart_enabled("gold_agg_exec_kpis", mart_plan):
             try:
                 if fact_sales is None or dim_customer is None:
                     raise FileNotFoundError("gold_fact_sales and gold_dim_customer are required for gold_agg_exec_kpis")
                 agg_exec_kpis = build_gold_agg_exec_kpis(fact_sales, dim_customer)
                 out = data_dir / "gold_agg_exec_kpis.csv"
-                agg_exec_kpis.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(agg_exec_kpis, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_agg_exec_kpis",
@@ -946,22 +1098,25 @@ def main() -> int:
                         "rows": int(len(agg_exec_kpis)),
                         "schema": list(agg_exec_kpis.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_agg_exec_kpis rows={len(agg_exec_kpis)}")
+                log_event(logger, "MART_BUILT", "Built gold_agg_exec_kpis", {"rows": len(agg_exec_kpis), "duration_s": duration})
             except Exception as e:
-                msg = f"Failed gold_agg_exec_kpis: {e}"
+                msg = f"Failed gold_agg_exec_kpis: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_agg_exec_kpis"}})
 
         # 6) gold_agg_product_performance
-        if mart_enabled("gold_agg_product_performance"):
+        if mart_enabled("gold_agg_product_performance", mart_plan):
             try:
                 if fact_sales is None or dim_product is None:
                     raise FileNotFoundError("gold_fact_sales and gold_dim_product are required for gold_agg_product_performance")
                 agg_prod_perf = build_gold_agg_product_performance(fact_sales, dim_product)
                 out = data_dir / "gold_agg_product_performance.csv"
-                agg_prod_perf.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(agg_prod_perf, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_agg_product_performance",
@@ -969,22 +1124,30 @@ def main() -> int:
                         "rows": int(len(agg_prod_perf)),
                         "schema": list(agg_prod_perf.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_agg_product_performance rows={len(agg_prod_perf)}")
+                log_event(
+                    logger,
+                    "MART_BUILT",
+                    "Built gold_agg_product_performance",
+                    {"rows": len(agg_prod_perf), "duration_s": duration},
+                )
             except Exception as e:
-                msg = f"Failed gold_agg_product_performance: {e}"
+                msg = f"Failed gold_agg_product_performance: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_agg_product_performance"}})
 
         # 7) gold_agg_geo_performance
-        if mart_enabled("gold_agg_geo_performance"):
+        if mart_enabled("gold_agg_geo_performance", mart_plan):
             try:
                 if fact_sales is None or dim_location is None or dim_product is None:
                     raise FileNotFoundError("gold_fact_sales, gold_dim_location, and gold_dim_product are required for gold_agg_geo_performance")
                 agg_geo_perf = build_gold_agg_geo_performance(fact_sales, dim_location, dim_product)
                 out = data_dir / "gold_agg_geo_performance.csv"
-                agg_geo_perf.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(agg_geo_perf, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_agg_geo_performance",
@@ -992,22 +1155,30 @@ def main() -> int:
                         "rows": int(len(agg_geo_perf)),
                         "schema": list(agg_geo_perf.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_agg_geo_performance rows={len(agg_geo_perf)}")
+                log_event(
+                    logger,
+                    "MART_BUILT",
+                    "Built gold_agg_geo_performance",
+                    {"rows": len(agg_geo_perf), "duration_s": duration},
+                )
             except Exception as e:
-                msg = f"Failed gold_agg_geo_performance: {e}"
+                msg = f"Failed gold_agg_geo_performance: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_agg_geo_performance"}})
 
         # 8) gold_wide_sales_enriched
-        if mart_enabled("gold_wide_sales_enriched"):
+        if mart_enabled("gold_wide_sales_enriched", mart_plan):
             try:
                 if fact_sales is None or dim_customer is None or dim_product is None or dim_location is None:
                     raise FileNotFoundError("gold_fact_sales, gold_dim_customer, gold_dim_product, and gold_dim_location are required for gold_wide_sales_enriched")
                 wide_sales = build_gold_wide_sales_enriched(fact_sales, dim_customer, dim_product, dim_location)
                 out = data_dir / "gold_wide_sales_enriched.csv"
-                wide_sales.to_csv(out, index=False)
+                mart_start = time.perf_counter()
+                write_csv(wide_sales, out)
+                duration = time.perf_counter() - mart_start
                 outputs.append(
                     {
                         "name": "gold_wide_sales_enriched",
@@ -1015,28 +1186,38 @@ def main() -> int:
                         "rows": int(len(wide_sales)),
                         "schema": list(wide_sales.columns),
                         "sha256": sha256_file(out),
+                        "duration_s": duration,
                     }
                 )
-                log(f"CREATED gold_wide_sales_enriched rows={len(wide_sales)}")
+                log_event(
+                    logger,
+                    "MART_BUILT",
+                    "Built gold_wide_sales_enriched",
+                    {"rows": len(wide_sales), "duration_s": duration},
+                )
             except Exception as e:
-                msg = f"Failed gold_wide_sales_enriched: {e}"
+                msg = f"Failed gold_wide_sales_enriched: {type(e).__name__}: {e}"
                 errors.append(msg)
-                log(msg)
+                logger.exception(msg, extra={"event": "MART_FAILURE", "context": {"mart": "gold_wide_sales_enriched"}})
 
         notes.append("Gold marts built based on Silver sales, product, customer, demographic, and location data, where available. Date fields converted to ISO format where appropriate. Return Rate KPIs set to None due to lack of returns data.")
 
     except Exception as e:
         errors.append(f"UNHANDLED gold build failure: {type(e).__name__}: {e}")
-        log("UNHANDLED_EXCEPTION")
-        log(traceback.format_exc())
+        logger.exception(
+            "UNHANDLED_EXCEPTION",
+            extra={"event": "UNHANDLED_EXCEPTION", "context": {"error_type": type(e).__name__}},
+        )
 
     end_dt = utc_now()
+    total_duration = time.perf_counter() - perf_start
     status = "success" if not errors else "partial"
 
     meta: Dict[str, Any] = {
         "run": {
             "layer": "gold",
             "pipeline": "load_3_gold_layer",
+            "pipeline_version": PIPELINE_VERSION,
             "run_id": gold_run_id,
             "started_utc": iso_utc(start_dt),
             "ended_utc": iso_utc(end_dt),
@@ -1052,6 +1233,11 @@ def main() -> int:
             "silver_run_id": silver_run_id,
             "silver_data_dir": str(silver_data_dir),
             "suffix": suffix,
+        },
+        "metrics": {
+            "outputs_count": len(outputs),
+            "errors_count": len(errors),
+            "duration_s": total_duration,
         },
         "outputs": outputs,
         "errors": errors,
@@ -1074,8 +1260,12 @@ def main() -> int:
         reports_dir / "gold_report.html",
     )
 
-    log(f"RUN_END duration_s={(end_dt - start_dt).total_seconds():.3f} status={status}")
-    log(f"OUTPUT={gold_dir}")
+    log_event(
+        logger,
+        "RUN_END",
+        "Gold run completed",
+        {"duration_s": total_duration, "status": status, "output_dir": str(gold_dir)},
+    )
 
     return 0 if status == "success" else 2
 

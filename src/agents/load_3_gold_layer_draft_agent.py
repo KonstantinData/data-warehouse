@@ -23,15 +23,80 @@ to decide which marts to build or how to prioritize them.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
+
+
+LOGGER = logging.getLogger(__name__)
+
+RUN_ID_PATTERN = r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[A-Za-z0-9]+)$"
+RUN_ID_RE = re.compile(RUN_ID_PATTERN)
+DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BACKOFF_SECONDS = 1.5
+DEFAULT_LOG_LEVEL = "INFO"
+ENV_SNAPSHOT_KEYS = (
+    "OPEN_AI_KEY",
+    "OPENAI_API_KEY",
+    "GOLD_DRAFT_MODEL",
+    "GOLD_DRAFT_MAX_RETRIES",
+    "GOLD_DRAFT_BACKOFF_SECONDS",
+    "GOLD_DRAFT_LOG_LEVEL",
+)
+REDACTED_ENV_KEYS = {"OPEN_AI_KEY", "OPENAI_API_KEY"}
+REQUIRED_PLAN_KEYS = {
+    "silver_run_id",
+    "gold_layer_objective",
+    "dimensions",
+    "facts",
+    "marts",
+    "risks",
+    "assumptions",
+    "next_steps",
+}
+
+
+class PlanningError(RuntimeError):
+    """Base class for planning failures."""
+
+
+class ConfigError(PlanningError):
+    """Configuration is missing or invalid."""
+
+
+class FileReadError(PlanningError):
+    """Raised when reading files fails."""
+
+
+class PlanParseError(PlanningError):
+    """Raised when LLM plan parsing fails."""
+
+
+class PlanValidationError(PlanningError):
+    """Raised when LLM plan schema validation fails."""
+
+
+class LLMCallError(PlanningError):
+    """Raised when LLM calls fail after retries."""
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    model_name: str
+    max_retries: int
+    backoff_seconds: float
+    log_level: str
+    api_key: str
 
 
 # ---------------------------------------------------------------------
@@ -48,9 +113,6 @@ def find_repo_root(start: Path) -> Path:
             return cur
         cur = cur.parent
     return start.resolve().parents[2]
-
-
-RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[A-Za-z0-9]+)$")
 
 
 def extract_run_suffix(run_id: str) -> str | None:
@@ -91,22 +153,43 @@ def find_latest_silver_run_id(
 
 
 def read_text(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-    return path.read_text(encoding="utf-8")
+    try:
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise FileReadError(f"Failed to read file: {path}") from exc
 
 
 def read_json(path: Path) -> Dict[str, Any]:
-    return json.loads(read_text(path))
+    try:
+        return json.loads(read_text(path))
+    except json.JSONDecodeError as exc:
+        raise FileReadError(f"Failed to parse JSON file: {path}") from exc
 
 
 def read_yaml(path: Path) -> Dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise FileReadError(f"Failed to parse YAML file: {path}") from exc
+    except OSError as exc:
+        raise FileReadError(f"Failed to read YAML file: {path}") from exc
+
+
+def validate_run_id(run_id: str) -> None:
+    if Path(run_id).name != run_id:
+        raise ValueError("Run id must not contain path separators.")
+    if not RUN_ID_RE.match(run_id):
+        raise ValueError(
+            f"Run id '{run_id}' does not match expected pattern {RUN_ID_PATTERN}."
+        )
 
 
 def resolve_silver_run_id(silver_root: Path, requested_run_id: str | None) -> str:
     if requested_run_id:
+        validate_run_id(requested_run_id)
         return requested_run_id
     return find_latest_silver_run_id(silver_root)
 
@@ -127,9 +210,11 @@ def resolve_silver_context_run_id(silver_root: Path, silver_run_id: str) -> str:
         except FileNotFoundError:
             fallback_run_id = None
         if fallback_run_id:
-            print(
-                "[PLANNING] Requested Silver run missing context; "
-                f"falling back to latest run with suffix #{suffix}: {fallback_run_id}"
+            LOGGER.warning(
+                "Requested Silver run missing context; falling back to latest run with "
+                "suffix #%s: %s",
+                suffix,
+                fallback_run_id,
             )
             return fallback_run_id
 
@@ -141,9 +226,10 @@ def resolve_silver_context_run_id(silver_root: Path, silver_run_id: str) -> str:
             f"{silver_root}"
         ) from exc
 
-    print(
-        "[PLANNING] Requested Silver run missing context; "
-        f"falling back to latest run with available context: {fallback_run_id}"
+    LOGGER.warning(
+        "Requested Silver run missing context; falling back to latest run with "
+        "available context: %s",
+        fallback_run_id,
     )
     return fallback_run_id
 
@@ -151,17 +237,10 @@ def resolve_silver_context_run_id(silver_root: Path, silver_run_id: str) -> str:
 # ---------------------------------------------------------------------
 # OpenAI helpers
 # ---------------------------------------------------------------------
-def build_llm_client() -> OpenAI:
-    """
-    Build an OpenAI client using OPEN_AI_KEY or OPENAI_API_KEY
-    from the environment or .env file.
-    """
-    load_dotenv()
-    api_key = os.getenv("OPEN_AI_KEY") or os.getenv("OPENAI_API_KEY")
+def build_llm_client(api_key: str) -> OpenAI:
     if not api_key:
-        raise RuntimeError(
-            "No OPEN_AI_KEY or OPENAI_API_KEY found in environment/.env; "
-            "cannot call OpenAI LLM."
+        raise ConfigError(
+            "No OPEN_AI_KEY or OPENAI_API_KEY found; cannot call OpenAI LLM."
         )
     return OpenAI(api_key=api_key)
 
@@ -193,7 +272,109 @@ def _parse_json_from_llm(raw: str) -> Dict[str, Any]:
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
 
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise PlanParseError("Failed to parse JSON from LLM response.") from exc
+
+
+def validate_gold_plan(plan: Dict[str, Any]) -> None:
+    missing = REQUIRED_PLAN_KEYS - set(plan)
+    if missing:
+        raise PlanValidationError(f"Gold plan missing keys: {sorted(missing)}")
+    list_fields = ["dimensions", "facts", "marts", "risks", "assumptions", "next_steps"]
+    for field in list_fields:
+        if not isinstance(plan.get(field), list):
+            raise PlanValidationError(f"Gold plan field '{field}' must be a list.")
+    for section in ("dimensions", "facts", "marts"):
+        for item in plan.get(section, []):
+            if not isinstance(item, dict):
+                raise PlanValidationError(
+                    f"Gold plan section '{section}' must contain objects."
+                )
+
+
+def load_config() -> AgentConfig:
+    model_name = os.getenv("GOLD_DRAFT_MODEL", DEFAULT_MODEL)
+    log_level = os.getenv("GOLD_DRAFT_LOG_LEVEL", DEFAULT_LOG_LEVEL)
+    try:
+        max_retries = int(os.getenv("GOLD_DRAFT_MAX_RETRIES", DEFAULT_MAX_RETRIES))
+        backoff_seconds = float(
+            os.getenv("GOLD_DRAFT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS)
+        )
+    except ValueError as exc:
+        raise ConfigError("Retry configuration must be numeric.") from exc
+
+    if max_retries < 1:
+        raise ConfigError("GOLD_DRAFT_MAX_RETRIES must be >= 1.")
+    if backoff_seconds <= 0:
+        raise ConfigError("GOLD_DRAFT_BACKOFF_SECONDS must be > 0.")
+
+    api_key = os.getenv("OPEN_AI_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ConfigError(
+            "No OPEN_AI_KEY or OPENAI_API_KEY found; cannot call OpenAI LLM."
+        )
+
+    return AgentConfig(
+        model_name=model_name,
+        max_retries=max_retries,
+        backoff_seconds=backoff_seconds,
+        log_level=log_level,
+        api_key=api_key,
+    )
+
+
+def setup_logging(log_level: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+
+def build_env_snapshot() -> Dict[str, Any]:
+    snapshot: Dict[str, Any] = {}
+    for key in ENV_SNAPSHOT_KEYS:
+        if key in os.environ:
+            snapshot[key] = (
+                "<redacted>" if key in REDACTED_ENV_KEYS else os.environ[key]
+            )
+    return snapshot
+
+
+def write_json(path: Path, payload: Dict[str, Any]) -> None:
+    try:
+        path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise FileReadError(f"Failed to write JSON file: {path}") from exc
+
+
+def with_retry(
+    action: str,
+    func,
+    *,
+    max_retries: int,
+    backoff_seconds: float,
+) -> Any:
+    for attempt in range(1, max_retries + 1):
+        try:
+            return func()
+        except Exception as exc:
+            if attempt >= max_retries:
+                raise LLMCallError(f"{action} failed after {attempt} attempts.") from exc
+            sleep_for = backoff_seconds * (2 ** (attempt - 1))
+            LOGGER.warning(
+                "%s failed on attempt %s/%s: %s. Retrying in %.1fs.",
+                action,
+                attempt,
+                max_retries,
+                exc,
+                sleep_for,
+            )
+            time.sleep(sleep_for)
 
 
 # ---------------------------------------------------------------------
@@ -204,7 +385,10 @@ def create_gold_design_report(
     silver_run_id: str,
     silver_agent_context: Dict[str, Any],
     silver_metadata: Dict[str, Any],
-    model_name: str = "gpt-4.1-mini",
+    *,
+    model_name: str,
+    max_retries: int,
+    backoff_seconds: float,
 ) -> str:
     """
     Ask the LLM to produce a human-readable Gold-layer design report
@@ -251,10 +435,18 @@ def create_gold_design_report(
         ),
     }
 
-    resp = client.chat.completions.create(
-        model=model_name,
-        messages=[system_msg, user_msg],
-        temperature=0.2,
+    def _call():
+        return client.chat.completions.create(
+            model=model_name,
+            messages=[system_msg, user_msg],
+            temperature=0.2,
+        )
+
+    resp = with_retry(
+        "Gold design report LLM call",
+        _call,
+        max_retries=max_retries,
+        backoff_seconds=backoff_seconds,
     )
 
     content = resp.choices[0].message.content or ""
@@ -266,7 +458,10 @@ def create_gold_mart_plan(
     silver_run_id: str,
     silver_agent_context: Dict[str, Any],
     silver_metadata: Dict[str, Any],
-    model_name: str = "gpt-4.1-mini",
+    *,
+    model_name: str,
+    max_retries: int,
+    backoff_seconds: float,
 ) -> Dict[str, Any]:
     """
     Ask the LLM to produce a strict JSON Gold-layer plan that a static
@@ -363,16 +558,27 @@ def create_gold_mart_plan(
         ),
     }
 
-    resp = client.chat.completions.create(
-        model=model_name,
-        messages=[system_msg, user_msg],
-        temperature=0.1,
+    def _call():
+        return client.chat.completions.create(
+            model=model_name,
+            messages=[system_msg, user_msg],
+            temperature=0.1,
+        )
+
+    resp = with_retry(
+        "Gold mart plan LLM call",
+        _call,
+        max_retries=max_retries,
+        backoff_seconds=backoff_seconds,
     )
 
     raw = resp.choices[0].message.content or ""
     try:
-        return _parse_json_from_llm(raw)
-    except Exception as exc:
+        plan = _parse_json_from_llm(raw)
+        validate_gold_plan(plan)
+        return plan
+    except (PlanParseError, PlanValidationError) as exc:
+        LOGGER.error("Gold mart plan parsing/validation failed: %s", exc)
         # Fallback minimal plan if JSON parsing fails
         return {
             "silver_run_id": silver_run_id,
@@ -470,7 +676,7 @@ def create_gold_mart_plan(
                     ],
                 },
             ],
-            "risks": [f"JSON parsing failed in planning agent: {exc}"],
+            "risks": [f"JSON parsing/validation failed in planning agent: {exc}"],
             "assumptions": ["Silver schema is stable and consistent."],
             "next_steps": [
                 "Inspect the source Silver metadata and refine the Gold plan manually."
@@ -482,60 +688,87 @@ def create_gold_mart_plan(
 # Main orchestration
 # ---------------------------------------------------------------------
 def main() -> int:
-    # Determine repo root and relevant directories
-    repo_root = find_repo_root(Path(__file__).resolve())
-    silver_root = repo_root / "artifacts" / "silver"
-    planning_root = repo_root / "tmp" / "draft_reports" / "gold"
+    try:
+        load_dotenv()
+        config = load_config()
+        setup_logging(config.log_level)
 
-    # Determine which Silver run to use
-    requested_run_id = sys.argv[1] if len(sys.argv) > 1 else None
-    silver_run_id = resolve_silver_run_id(silver_root, requested_run_id)
-    silver_run_id = resolve_silver_context_run_id(silver_root, silver_run_id)
+        # Determine repo root and relevant directories
+        repo_root = find_repo_root(Path(__file__).resolve())
+        silver_root = repo_root / "artifacts" / "silver"
+        planning_root = repo_root / "tmp" / "draft_reports" / "gold"
 
-    silver_run_dir = silver_root / silver_run_id
+        # Determine which Silver run to use
+        requested_run_id = sys.argv[1] if len(sys.argv) > 1 else None
+        silver_run_id = resolve_silver_run_id(silver_root, requested_run_id)
+        silver_run_id = resolve_silver_context_run_id(silver_root, silver_run_id)
 
-    # Input paths (Silver)
-    agent_ctx_path = silver_run_dir / "reports" / "silver_run_agent_context.json"
-    metadata_path = silver_run_dir / "metadata.yaml"
+        silver_run_dir = silver_root / silver_run_id
 
-    silver_agent_context = read_json(agent_ctx_path)
-    silver_metadata = read_yaml(metadata_path)
+        # Input paths (Silver)
+        agent_ctx_path = silver_run_dir / "reports" / "silver_run_agent_context.json"
+        metadata_path = silver_run_dir / "metadata.yaml"
 
-    # Output directories and paths (Gold planning)
-    planning_run_dir = planning_root / silver_run_id
-    planning_run_dir.mkdir(parents=True, exist_ok=True)
+        silver_agent_context = read_json(agent_ctx_path)
+        silver_metadata = read_yaml(metadata_path)
 
-    design_report_path = planning_run_dir / "gold_run_human_report.md"
-    mart_plan_path = planning_run_dir / "gold_run_agent_context.json"
+        # Output directories and paths (Gold planning)
+        planning_run_dir = planning_root / silver_run_id
+        planning_run_dir.mkdir(parents=True, exist_ok=True)
 
-    # LLM client
-    client = build_llm_client()
+        design_report_path = planning_run_dir / "gold_run_human_report.md"
+        mart_plan_path = planning_run_dir / "gold_run_agent_context.json"
+        inputs_path = planning_run_dir / "gold_run_inputs.json"
+        env_snapshot_path = planning_run_dir / "gold_run_env_snapshot.json"
 
-    # 1) Human-readable design report
-    design_md = create_gold_design_report(
-        client=client,
-        silver_run_id=silver_run_id,
-        silver_agent_context=silver_agent_context,
-        silver_metadata=silver_metadata,
-    )
-    design_report_path.write_text(design_md, encoding="utf-8")
-    print(f"[PLANNING] Wrote Gold design report to: {design_report_path}")
+        write_json(
+            inputs_path,
+            {
+                "requested_run_id": requested_run_id,
+                "silver_run_id": silver_run_id,
+                "silver_root": str(silver_root),
+                "planning_root": str(planning_root),
+            },
+        )
+        write_json(env_snapshot_path, build_env_snapshot())
 
-    # 2) Machine-readable mart plan
-    mart_plan = create_gold_mart_plan(
-        client=client,
-        silver_run_id=silver_run_id,
-        silver_agent_context=silver_agent_context,
-        silver_metadata=silver_metadata,
-    )
-    mart_plan_path.write_text(
-        json.dumps(mart_plan, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    print(f"[PLANNING] Wrote Gold mart plan to: {mart_plan_path}")
+        # LLM client
+        client = build_llm_client(config.api_key)
 
-    print("[PLANNING] Gold-layer planning completed successfully.")
-    return 0
+        # 1) Human-readable design report
+        design_md = create_gold_design_report(
+            client=client,
+            silver_run_id=silver_run_id,
+            silver_agent_context=silver_agent_context,
+            silver_metadata=silver_metadata,
+            model_name=config.model_name,
+            max_retries=config.max_retries,
+            backoff_seconds=config.backoff_seconds,
+        )
+        design_report_path.write_text(design_md, encoding="utf-8")
+        LOGGER.info("Wrote Gold design report to: %s", design_report_path)
+
+        # 2) Machine-readable mart plan
+        mart_plan = create_gold_mart_plan(
+            client=client,
+            silver_run_id=silver_run_id,
+            silver_agent_context=silver_agent_context,
+            silver_metadata=silver_metadata,
+            model_name=config.model_name,
+            max_retries=config.max_retries,
+            backoff_seconds=config.backoff_seconds,
+        )
+        write_json(mart_plan_path, mart_plan)
+        LOGGER.info("Wrote Gold mart plan to: %s", mart_plan_path)
+
+        LOGGER.info("Gold-layer planning completed successfully.")
+        return 0
+    except PlanningError as exc:
+        LOGGER.error("Gold-layer planning failed: %s", exc)
+        return 1
+    except Exception:
+        LOGGER.exception("Gold-layer planning failed with unexpected error.")
+        return 1
 
 
 if __name__ == "__main__":

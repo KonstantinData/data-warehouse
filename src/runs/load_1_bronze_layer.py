@@ -21,6 +21,8 @@ Key properties:
 
 from __future__ import annotations
 
+import argparse
+import fnmatch
 import hashlib
 import os
 import platform
@@ -30,7 +32,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import yaml
@@ -40,24 +42,18 @@ import yaml
 # -----------------------------
 
 # Paths (relative to project root)
-RAW_CRM = os.path.join("raw", "source_crm")
-RAW_ERP = os.path.join("raw", "source_erp")
+DEFAULT_RAW_CRM = os.path.join("raw", "source_crm")
+DEFAULT_RAW_ERP = os.path.join("raw", "source_erp")
 
 # Match your folder structure from the screenshot
-BRONZE_ROOT = os.path.join("artifacts", "bronze")
-
-# Files to include
-CRM_FILES = ["cst_info.csv", "prd_info.csv", "sales_details.csv"]
-ERP_FILES = ["CST_AZ12.csv", "LOC_A101.csv", "PX_CAT_G1V2.csv"]
+DEFAULT_BRONZE_ROOT = os.path.join("artifacts", "bronze")
 
 # Optional: allow overriding roots via env vars
-RAW_CRM = os.environ.get("RAW_CRM", RAW_CRM)
-RAW_ERP = os.environ.get("RAW_ERP", RAW_ERP)
-BRONZE_ROOT = os.environ.get("BRONZE_ROOT", BRONZE_ROOT)
+DEFAULT_RAW_CRM = os.environ.get("RAW_CRM", DEFAULT_RAW_CRM)
+DEFAULT_RAW_ERP = os.environ.get("RAW_ERP", DEFAULT_RAW_ERP)
+DEFAULT_BRONZE_ROOT = os.environ.get("BRONZE_ROOT", DEFAULT_BRONZE_ROOT)
 
 
-STATE_DIR = os.path.join(BRONZE_ROOT, "_state")
-STATE_PATH = os.path.join(STATE_DIR, "last_ingested.yaml")
 
 
 HTML_REPORT_TEMPLATE = """\
@@ -157,22 +153,73 @@ def read_state(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {"files": {}}
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Load CRM/ERP raw CSVs into bronze layer.")
+    parser.add_argument("--raw-crm", default=DEFAULT_RAW_CRM, help="Path to CRM raw source directory.")
+    parser.add_argument("--raw-erp", default=DEFAULT_RAW_ERP, help="Path to ERP raw source directory.")
+    parser.add_argument("--bronze-root", default=DEFAULT_BRONZE_ROOT, help="Root path for bronze artifacts.")
+    parser.add_argument(
+        "--crm-file-glob",
+        default=os.environ.get("CRM_FILE_GLOB", "*.csv"),
+        help="Glob pattern for CRM files (default: *.csv).",
+    )
+    parser.add_argument(
+        "--crm-file-exclude",
+        default=os.environ.get("CRM_FILE_EXCLUDE"),
+        help="Optional glob pattern to exclude CRM files.",
+    )
+    parser.add_argument(
+        "--erp-file-glob",
+        default=os.environ.get("ERP_FILE_GLOB", "*.csv"),
+        help="Glob pattern for ERP files (default: *.csv).",
+    )
+    parser.add_argument(
+        "--erp-file-exclude",
+        default=os.environ.get("ERP_FILE_EXCLUDE"),
+        help="Optional glob pattern to exclude ERP files.",
+    )
+    return parser.parse_args()
+
+def list_source_files(root: str, include_glob: str, exclude_glob: Optional[str]) -> List[str]:
+    entries = []
+    if not os.path.isdir(root):
+        return entries
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        if not os.path.isfile(path):
+            continue
+        if include_glob and not fnmatch.fnmatch(name, include_glob):
+            continue
+        if exclude_glob and fnmatch.fnmatch(name, exclude_glob):
+            continue
+        entries.append(name)
+    return sorted(entries)
+
 
 # -----------------------------
 # Main
 # -----------------------------
 
 def main() -> None:
+    args = parse_args()
+    raw_crm = args.raw_crm
+    raw_erp = args.raw_erp
+    bronze_root = args.bronze_root
+    crm_files = list_source_files(raw_crm, args.crm_file_glob, args.crm_file_exclude)
+    erp_files = list_source_files(raw_erp, args.erp_file_glob, args.erp_file_exclude)
+    state_dir = os.path.join(bronze_root, "_state")
+    state_path = os.path.join(state_dir, "last_ingested.yaml")
+
     start_dt = utc_now()
     run_id = f"{start_dt.strftime('%Y%m%d_%H%M%S')}_#{str(uuid.uuid4())[:8]}"
 
-    elt_dir = os.path.join(BRONZE_ROOT, run_id)
+    elt_dir = os.path.join(bronze_root, run_id)
     data_dir = os.path.join(elt_dir, "data")
     report_dir = os.path.join(elt_dir, "reports")
 
     ensure_dir(data_dir)
     ensure_dir(report_dir)
-    ensure_dir(STATE_DIR)
+    ensure_dir(state_dir)
 
     log_path = os.path.join(data_dir, "run_log.txt")
 
@@ -183,7 +230,14 @@ def main() -> None:
             f.write(line + "\n")
 
     log(f"RUN_START run_id={run_id}")
-    log(f"CONFIG RAW_CRM={RAW_CRM} RAW_ERP={RAW_ERP} BRONZE_ROOT={BRONZE_ROOT}")
+    log(
+        "CONFIG "
+        f"RAW_CRM={raw_crm} RAW_ERP={raw_erp} BRONZE_ROOT={bronze_root} "
+        f"CRM_FILE_GLOB={args.crm_file_glob} CRM_FILE_EXCLUDE={args.crm_file_exclude} "
+        f"ERP_FILE_GLOB={args.erp_file_glob} ERP_FILE_EXCLUDE={args.erp_file_exclude}"
+    )
+    log(f"DISCOVERED CRM_FILES={crm_files}")
+    log(f"DISCOVERED ERP_FILES={erp_files}")
 
     metadata: Dict[str, Any] = {
         "run": {
@@ -198,15 +252,21 @@ def main() -> None:
             "platform": platform.platform(),
         },
         "sources": {
-            "crm_root": RAW_CRM,
-            "erp_root": RAW_ERP,
+            "crm_root": raw_crm,
+            "erp_root": raw_erp,
+            "crm_file_glob": args.crm_file_glob,
+            "crm_file_exclude": args.crm_file_exclude,
+            "erp_file_glob": args.erp_file_glob,
+            "erp_file_exclude": args.erp_file_exclude,
+            "crm_files": crm_files,
+            "erp_files": erp_files,
         },
         "tables": {},  # filename -> metadata
         "summary": {},
     }
 
     results: List[Dict[str, Any]] = []
-    state = read_state(STATE_PATH)
+    state = read_state(state_path)
     state_files = state.get("files", {})
     next_state_files: Dict[str, Any] = {}
 
@@ -303,13 +363,13 @@ def main() -> None:
 
     # Process CRM
     log("BEGIN CRM SOURCE LOAD")
-    for f in CRM_FILES:
-        process_file(RAW_CRM, f, "CRM")
+    for f in crm_files:
+        process_file(raw_crm, f, "CRM")
 
     # Process ERP
     log("BEGIN ERP SOURCE LOAD")
-    for f in ERP_FILES:
-        process_file(RAW_ERP, f, "ERP")
+    for f in erp_files:
+        process_file(raw_erp, f, "ERP")
 
     # Summary
     ok = sum(1 for r in results if r["status"] == "SUCCESS")
@@ -344,7 +404,7 @@ def main() -> None:
             "updated_utc": iso_utc(end_dt),
             "files": next_state_files,
         }
-        write_yaml(state_payload, STATE_PATH)
+        write_yaml(state_payload, state_path)
 
     log(f"RUN_END run_id={run_id} duration_s={metadata['run']['duration_s']:.3f} success={ok} failed={failed}")
 

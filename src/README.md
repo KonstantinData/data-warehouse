@@ -118,6 +118,18 @@ python src/runs/load_1_bronze_layer.py \
     --output-path ../artifacts/bronze
 ```
 
+Optional file selection controls:
+
+```bash
+python src/runs/load_1_bronze_layer.py \
+    --raw-crm ../raw/source_crm \
+    --raw-erp ../raw/source_erp \
+    --bronze-root ../artifacts/bronze \
+    --crm-file-glob "*.csv" \
+    --erp-file-glob "*.csv" \
+    --crm-file-exclude "*_tmp.csv"
+```
+
 ---
 
 #### `load_2_silver_layer.py`

@@ -623,12 +623,8 @@ def main() -> int:
         try:
             log("CALL agents.load_2_report_agent.run_report_agent ...")
             run_report_agent(
+                run_id=bronze_run_id,
                 silver_run_id=silver_run_id,
-                bronze_run_id=bronze_run_id,
-                silver_run_dir=elt_dir,
-                metadata_path=os.path.join(data_dir, "metadata.yaml"),
-                log_path=log_file,
-                html_report_path=report_html_path,
             )
             log("load_2_report_agent finished successfully.")
         except Exception as e:

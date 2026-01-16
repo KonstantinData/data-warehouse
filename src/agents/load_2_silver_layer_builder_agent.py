@@ -3,8 +3,8 @@ load_2_silver_layer_builder_agent.py
 
 ROLE:
 - Builds the final Silver ETL script using:
-    (1) latest silver_run_agent_context.json
-    (2) latest silver_run_human_report.md
+    (1) latest silver_run_agent_context.json in artifacts/tmp/draft_reports/silver/<run_id>
+    (2) latest silver_run_human_report.md in artifacts/tmp/draft_reports/silver/<run_id>
     (3) src/templates/load_2_silver_layer_template.py
 
 - Generates a new src/runs/load_2_silver_layer.py based on LLM reasoning
@@ -38,10 +38,10 @@ def find_repo_root(start: Path) -> Path:
     return start.resolve()
 
 
-def find_latest_silver_run_id(silver_root: Path) -> str:
-    run_ids = [p.name for p in silver_root.iterdir() if p.is_dir()]
+def find_latest_bronze_run_id(bronze_root: Path) -> str:
+    run_ids = [p.name for p in bronze_root.iterdir() if p.is_dir()]
     if not run_ids:
-        raise FileNotFoundError("No Silver runs found!")
+        raise FileNotFoundError("No Bronze runs found!")
     return sorted(run_ids)[-1]
 
 
@@ -138,17 +138,17 @@ def main() -> int:
     repo_root = find_repo_root(Path(__file__).resolve())
     print(f"[BUILDER] REPO_ROOT={repo_root}")
 
-    silver_root = repo_root / "artifacts" / "silver"
+    bronze_root = repo_root / "artifacts" / "bronze"
 
     # Silver Run ID
     if len(sys.argv) > 1:
-        silver_run_id = sys.argv[1]
+        bronze_run_id = sys.argv[1]
     else:
-        silver_run_id = find_latest_silver_run_id(silver_root)
+        bronze_run_id = find_latest_bronze_run_id(bronze_root)
 
-    print(f"[BUILDER] Using SILVER_RUN_ID={silver_run_id}")
+    print(f"[BUILDER] Using BRONZE_RUN_ID={bronze_run_id}")
 
-    report_dir = silver_root / silver_run_id / "reports"
+    report_dir = repo_root / "artifacts" / "tmp" / "draft_reports" / "silver" / bronze_run_id
     context_path = report_dir / "silver_run_agent_context.json"
     human_report_path = report_dir / "silver_run_human_report.md"
 
@@ -181,11 +181,8 @@ def main() -> int:
         print("[BUILDER] SKIP_RUNNER_EXECUTION=1 set; skipping runner execution.")
         return 0
 
-    bronze_run_id = agent_context.get("bronze_run_id")
-    if bronze_run_id:
-        cmd = [sys.executable, str(runner_path), bronze_run_id]
-    else:
-        cmd = [sys.executable, str(runner_path)]
+    bronze_run_id = agent_context.get("bronze_run_id") or bronze_run_id
+    cmd = [sys.executable, str(runner_path), bronze_run_id]
     print(f"[BUILDER] Executing generated Silver ETL script with cmd: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=repo_root)
     print(f"[BUILDER] Script exited with code: {result.returncode}")

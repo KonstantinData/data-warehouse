@@ -1,13 +1,13 @@
 """
 load_2_report_agent.py
 
-Called at the end of load_2_silver_layer.py.
+Called to generate a Silver draft context using Bronze run artifacts.
 
 Responsibilities:
-- Reads metadata.yaml and run_log.txt of the Silver run
+- Reads metadata.yaml, run_log.txt, and CSVs from the Bronze run
 - Uses the Data Analytics Process (steps 1–10) as guiding framework
 - Calls an OpenAI LLM using environment variables (OPEN_AI_KEY / OPENAI_API_KEY)
-- Produces:
+- Produces (under artifacts/tmp/draft_reports/silver/<run_id>/):
     1) silver_run_human_report.md   (human-readable Markdown report)
     2) silver_run_agent_context.json (structured context for downstream agents)
 
@@ -15,15 +15,19 @@ IMPORTANT:
 - This agent does NOT perform any numeric calculations or ML.
 - It only describes business problems, scope options, KPI candidates, and
   segmentation/clustering opportunities based on the data and process context.
+- It adds automated profiling for schema overview, inferred types, nulls,
+  duplicates, key candidates, and suggested Silver transforms.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
+import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -228,68 +232,219 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def _parse_llm_json(text: str) -> Dict[str, Any]:
-    """
-    Try to robustly extract a JSON object from an LLM response.
+# --------------------------------------------------------------------
+# Profiling helpers
+# --------------------------------------------------------------------
+def _infer_series_type(series: pd.Series) -> str:
+    cleaned = series.dropna()
+    if cleaned.empty:
+        return "unknown"
 
-    Strategy:
-    - Strip whitespace.
-    - Remove surrounding code fences if present.
-    - Extract the largest {...} block.
-    - Attempt json.loads on the extracted text.
-    """
-    stripped = text.strip()
+    if cleaned.dtype == object:
+        cleaned = cleaned.astype(str).str.strip()
+        cleaned = cleaned[cleaned != ""]
+        if cleaned.empty:
+            return "unknown"
 
-    # Remove ```json ... ``` or ``` ... ``` fences if present
-    if stripped.startswith("```"):
-        parts = stripped.split("```")
-        if len(parts) >= 2:
-            candidate = parts[1]
-            candidate_lines = candidate.splitlines()
-            if candidate_lines and candidate_lines[0].strip().lower().startswith("json"):
-                candidate_lines = candidate_lines[1:]
-            stripped = "\n".join(candidate_lines).strip()
+    numeric = pd.to_numeric(cleaned, errors="coerce")
+    numeric_ratio = float(numeric.notna().mean())
 
-    # Extract the main JSON block between first '{' and last '}'
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = stripped[start : end + 1]
-    else:
-        candidate = stripped
+    datetime_values = pd.to_datetime(cleaned, errors="coerce", infer_datetime_format=True)
+    datetime_ratio = float(datetime_values.notna().mean())
 
-    return json.loads(candidate)
+    if numeric_ratio >= 0.9:
+        if (numeric.dropna() % 1 == 0).all():
+            return "integer"
+        return "float"
+
+    if datetime_ratio >= 0.9:
+        return "datetime"
+
+    if cleaned.dtype == object:
+        lowered = cleaned.astype(str).str.lower()
+        bool_like = lowered.isin({"true", "false", "yes", "no", "0", "1"})
+        if bool_like.mean() >= 0.9:
+            return "boolean"
+
+    return "string"
+
+
+def _detect_trim_needed(series: pd.Series) -> bool:
+    if series.dtype != object:
+        return False
+    stripped = series.astype(str).str.strip()
+    return (stripped != series.astype(str)).any()
+
+
+def _profile_table(df: pd.DataFrame, filename: str) -> Dict[str, Any]:
+    rows = len(df)
+    columns = list(df.columns)
+    inferred_types: Dict[str, str] = {}
+    null_counts: Dict[str, int] = {}
+    key_candidates: List[Dict[str, Any]] = []
+    suggested_transforms: List[str] = []
+
+    duplicate_rows = int(df.duplicated().sum())
+    if duplicate_rows > 0:
+        suggested_transforms.append(
+            f"Remove or consolidate {duplicate_rows} duplicate rows in {filename}."
+        )
+
+    for col in columns:
+        series = df[col]
+        nulls = int(series.isna().sum())
+        if series.dtype == object:
+            nulls += int((series == "").sum())
+        null_counts[col] = nulls
+
+        inferred = _infer_series_type(series)
+        inferred_types[col] = inferred
+
+        dtype_name = str(series.dtype)
+        col_lower = col.lower()
+        if inferred in {"integer", "float"} and dtype_name == "object":
+            suggested_transforms.append(f"Cast {col} to numeric ({inferred}).")
+        if inferred == "datetime" and dtype_name == "object":
+            suggested_transforms.append(f"Parse {col} as datetime.")
+        if _detect_trim_needed(series):
+            suggested_transforms.append(f"Trim whitespace in {col}.")
+        if nulls > 0:
+            suggested_transforms.append(f"Standardize missing values in {col}.")
+
+        unique_non_null = int(series.nunique(dropna=True))
+        uniqueness_ratio = (unique_non_null / rows) if rows else 0.0
+        if nulls == 0 and unique_non_null == rows and rows > 0:
+            key_candidates.append(
+                {"column": col, "reason": "unique_non_null"}
+            )
+        elif ("id" in col_lower or col_lower.endswith("_id") or col_lower.endswith("key")) and uniqueness_ratio >= 0.98:
+            key_candidates.append(
+                {
+                    "column": col,
+                    "reason": f"high_uniqueness_{uniqueness_ratio:.2%}",
+                }
+            )
+
+    if not suggested_transforms:
+        suggested_transforms.append("No obvious Silver transformations detected.")
+
+    return {
+        "table": filename,
+        "row_count": rows,
+        "column_count": len(columns),
+        "columns": columns,
+        "inferred_types": inferred_types,
+        "null_counts": null_counts,
+        "duplicate_rows": duplicate_rows,
+        "key_candidates": key_candidates,
+        "suggested_silver_transforms": sorted(set(suggested_transforms)),
+    }
+
+
+def _profile_bronze_run(data_dir: Path) -> Dict[str, Any]:
+    tables: Dict[str, Any] = {}
+    for csv_path in sorted(data_dir.glob("*.csv")):
+        df = pd.read_csv(csv_path)
+        tables[csv_path.name] = _profile_table(df, csv_path.name)
+
+    schema_overview = {
+        "table_count": len(tables),
+        "tables": [
+            {
+                "table": tbl["table"],
+                "row_count": tbl["row_count"],
+                "column_count": tbl["column_count"],
+            }
+            for tbl in tables.values()
+        ],
+    }
+
+    return {
+        "schema_overview": schema_overview,
+        "tables": tables,
+    }
+
+
+def _render_profile_markdown(profile: Dict[str, Any]) -> str:
+    lines = [
+        "## Automated Bronze Profiling (for Silver Draft)",
+        "",
+        "### Schema Overview",
+    ]
+    overview = profile.get("schema_overview", {})
+    for table in overview.get("tables", []):
+        lines.append(
+            f"- {table['table']}: {table['row_count']} rows, {table['column_count']} columns"
+        )
+
+    for table_name, table in profile.get("tables", {}).items():
+        lines.extend(
+            [
+                "",
+                f"### Table: {table_name}",
+                f"- Rows: {table['row_count']}",
+                f"- Columns: {', '.join(table['columns'])}",
+                "- Inferred types:",
+            ]
+        )
+        for col, inferred in table["inferred_types"].items():
+            lines.append(f"  - {col}: {inferred}")
+        lines.append("- Null counts:")
+        for col, nulls in table["null_counts"].items():
+            lines.append(f"  - {col}: {nulls}")
+        lines.append(f"- Duplicate rows: {table['duplicate_rows']}")
+        lines.append("- Key candidates:")
+        if table["key_candidates"]:
+            for candidate in table["key_candidates"]:
+                lines.append(
+                    f"  - {candidate['column']}: {candidate['reason']}"
+                )
+        else:
+            lines.append("  - None detected")
+        lines.append("- Suggested Silver transforms:")
+        for transform in table["suggested_silver_transforms"]:
+            lines.append(f"  - {transform}")
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------
 # Main function, called from load_2_silver_layer.py
 # --------------------------------------------------------------------
 def run_report_agent(
-    silver_run_id: str,
-    bronze_run_id: str,
-    silver_run_dir: str,
-    metadata_path: str,
-    log_path: str,
-    html_report_path: str,
+    run_id: str,
+    silver_run_id: str | None = None,
     model_name: str = "gpt-4.1-mini",
 ) -> None:
     """
-    Produces two outputs in the reports/ folder of the Silver run:
+    Produces two outputs in artifacts/tmp/draft_reports/silver/<run_id>/:
       - silver_run_human_report.md
       - silver_run_agent_context.json
     """
 
+    bronze_run_dir = Path("artifacts") / "bronze" / run_id
+    data_dir = bronze_run_dir / "data"
+    reports_dir = bronze_run_dir / "reports"
+
+    metadata_path = data_dir / "metadata.yaml"
+    log_path = data_dir / "run_log.txt"
+    html_report_path = reports_dir / "elt_report.html"
+
     client = _build_openai_client()
 
     # Paths
-    silver_run_dir_path = Path(silver_run_dir)
-    reports_dir = silver_run_dir_path / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path("artifacts") / "tmp" / "draft_reports" / "silver" / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    metadata_text = _read_text(Path(metadata_path))
-    log_text = _read_text(Path(log_path))
-    html_text = _read_text(Path(html_report_path))
-    metadata_dict = _read_yaml(Path(metadata_path))  # used for fallback JSON
+    metadata_text = _read_text(metadata_path)
+    log_text = _read_text(log_path)
+    html_text = _read_text(html_report_path)
+    metadata_dict = _read_yaml(metadata_path)
+
+    profile = _profile_bronze_run(data_dir)
+    profile_md = _render_profile_markdown(profile)
+    generated_at = datetime.now(timezone.utc).isoformat()
 
     # ------------------------------------------------------------
     # 1) Human-readable report (Markdown)
@@ -308,23 +463,28 @@ def run_report_agent(
             "role": "user",
             "content": (
                 "Create a human-readable Markdown report (in English) for this Silver-layer run.\n\n"
-                f"Silver run id: {silver_run_id}\n"
-                f"Bronze run id: {bronze_run_id}\n\n"
-                "Input 1: metadata.yaml (YAML):\n"
+                f"Bronze run id: {run_id}\n"
+                f"Silver run id (if available): {silver_run_id or 'N/A'}\n\n"
+                "Input 1: metadata.yaml (YAML) from Bronze:\n"
                 "-----------------------------\n"
                 f"{metadata_text}\n\n"
-                "Input 2: run_log.txt:\n"
+                "Input 2: run_log.txt from Bronze:\n"
                 "----------------------\n"
                 f"{log_text}\n\n"
                 "Input 3: HTML report (structure only, if helpful):\n"
                 "---------------------------------------------------\n"
                 f"{html_text[:8000]}\n\n"
+                "Input 4: Automated Bronze profiling for Silver draft:\n"
+                "-------------------------------------------------------\n"
+                f"{json.dumps(profile, indent=2)}\n\n"
                 "Requirements for the Markdown report:\n"
                 "- Short executive summary at the top (3–5 bullet points).\n"
                 "- Sections aligned to the Data Analytics process (1–10), but only where relevant to this run.\n"
                 "- Highlight data quality, structural integrity and readiness of the Silver layer.\n"
                 "- Mention which source tables were processed and which failed (if any).\n"
                 "- Do NOT perform any numeric calculations or statistics; stay conceptual.\n"
+                "- Include a dedicated section for schema overview, inferred types, nulls, duplicates,\n"
+                "  key candidates, and suggested Silver transforms (use the provided profiling inputs).\n"
                 "- In addition, add four dedicated sections:\n"
                 "  1) 'Potential business problems and decisions' – describe examples of business problems\n"
                 "     that could be analysed based on the available tables, including impact, stakeholders,\n"
@@ -346,167 +506,49 @@ def run_report_agent(
     )
     human_report_md = human_resp.choices[0].message.content or ""
 
-    human_report_path = reports_dir / "silver_run_human_report.md"
-    human_report_path.write_text(human_report_md, encoding="utf-8")
+    human_report_path = output_dir / "silver_run_human_report.md"
+    human_report_path.write_text(
+        f"{human_report_md}\n\n{profile_md}",
+        encoding="utf-8",
+    )
 
     # ------------------------------------------------------------
     # 2) Machine-readable context for downstream agents (JSON)
     # ------------------------------------------------------------
-    json_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a data-engineering orchestrator. "
-                "Your task is to produce a compact JSON summary of a Silver-layer ETL run, "
-                "to be consumed by a downstream agent in another run.\n\n"
-                "Use this Data Analytics process and the business/KPI/segmentation catalogues as conceptual background:\n"
-                + PROCESS_DESCRIPTION
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                "From the following metadata.yaml and log text, derive a strict JSON object.\n\n"
-                f"Silver run id: {silver_run_id}\n"
-                f"Bronze run id: {bronze_run_id}\n\n"
-                "metadata.yaml (YAML):\n"
-                "----------------------\n"
-                f"{metadata_text}\n\n"
-                "run_log.txt:\n"
-                "-------------\n"
-                f"{log_text}\n\n"
-                "Return ONLY valid JSON, no explanations, no comments.\n"
-                "JSON schema (keys) MUST be exactly:\n"
-                "{\n"
-                '  \"run_id\": string,\n'
-                '  \"bronze_run_id\": string,\n'
-                '  \"layer\": \"silver\",\n'
-                '  \"status\": \"SUCCESS\" | \"PARTIAL\" | \"FAILED\",\n'
-                '  \"files_total\": integer,\n'
-                '  \"files_success\": integer,\n'
-                '  \"files_failed\": integer,\n'
-                '  \"tables\": {\n'
-                '     \"<filename>.csv\": {\n'
-                '        \"status\": \"SUCCESS\" | \"FAILED\",\n'
-                '        \"rows_in\": integer,\n'
-                '        \"rows_out\": integer,\n'
-                '        \"schema_in\": [string],\n'
-                '        \"schema_out\": [string]\n'
-                "     },\n"
-                "     ...\n"
-                "  },\n"
-                '  \"data_analytics_process_focus\": [string],\n'
-                '  \"quality_flags\": [string],\n'
-                '  \"recommended_next_steps\": [string],\n'
-                '  \"business_problems\": [\n'
-                "     {\n"
-                '       \"name\": string,\n'
-                '       \"description\": string,\n'
-                '       \"impact\": string,\n'
-                '       \"stakeholders\": [string],\n'
-                '       \"decisions\": [string],\n'
-                '       \"assumptions\": [string]\n'
-                "     }\n"
-                "  ],\n"
-                '  \"scope_definition\": {\n'
-                '     \"time\": [string],\n'
-                '     \"geography\": [string],\n'
-                '     \"data\": [string],\n'
-                '     \"systems\": [string],\n'
-                '     \"outputs\": [string]\n'
-                "  },\n"
-                '  \"kpi_definitions\": [\n'
-                "     {\n"
-                '       \"name\": string,\n'
-                '       \"description\": string,\n'
-                '       \"formula\": string,\n'
-                '       \"tableau_usage\": string\n'
-                "     }\n"
-                "  ],\n"
-                '  \"segmentation_clustering\": {\n'
-                '     \"features\": [string],\n'
-                '     \"methods\": [string],\n'
-                '     \"example_segments\": [string]\n'
-                "  }\n"
-                "}\n"
-                "Populate the fields from the metadata/logs as precisely as possible, but:\n"
-                "- Do NOT compute any numeric KPIs.\n"
-                "- Do NOT run or simulate any clustering or ML.\n"
-                "- Use the catalogues in the system message to provide generic but meaningful examples.\n"
-                "If you are unsure, make a best effort guess but stay internally consistent.\n"
-            ),
-        },
-    ]
+    summary = metadata_dict.get("summary", {}) if isinstance(metadata_dict, dict) else {}
+    files_total = summary.get("files_total", 0)
+    files_success = summary.get("files_success", 0)
+    files_failed = summary.get("files_failed", 0)
 
-    json_resp = client.chat.completions.create(
-        model=model_name,
-        messages=json_messages,
-    )
-    json_raw = json_resp.choices[0].message.content or ""
-
-    # Robust parsing with fallback
-    try:
-        json_data = _parse_llm_json(json_raw)
-    except Exception:
-        # Fallback: build a minimal valid JSON using metadata.yaml only,
-        # and flag that the LLM JSON could not be parsed.
-        summary = metadata_dict.get("summary", {}) if isinstance(metadata_dict, dict) else {}
-        files_total = summary.get("files_total", 0)
-        files_success = summary.get("files_success", 0)
-        files_failed = summary.get("files_failed", 0)
-
-        tables_meta = metadata_dict.get("tables", {}) if isinstance(metadata_dict, dict) else {}
-        tables: Dict[str, Any] = {}
-        for fname, tmeta in tables_meta.items():
-            if not isinstance(tmeta, dict):
-                continue
-            tables[fname] = {
-                "status": tmeta.get("status", "UNKNOWN"),
-                "rows_in": tmeta.get("rows_in", 0),
-                "rows_out": tmeta.get("rows_out", 0),
-                "schema_in": tmeta.get("schema_in", []),
-                "schema_out": tmeta.get("schema_out", []),
-            }
-
-        json_data = {
-            "run_id": silver_run_id,
-            "bronze_run_id": bronze_run_id,
-            "layer": "silver",
-            "status": "PARTIAL" if files_failed and files_failed > 0 else "SUCCESS",
-            "files_total": files_total,
-            "files_success": files_success,
-            "files_failed": files_failed,
-            "tables": tables,
-            "data_analytics_process_focus": [
-                "Data Cleaning & Transformation",
-                "Validation & Quality Control",
-                "Readiness for BI/ML",
-            ],
-            "quality_flags": [
-                "LLM_JSON_PARSE_FAILED",
-            ],
-            "recommended_next_steps": [
-                "Inspect metadata.yaml and run_log.txt manually.",
-                "Re-run the LLM-based context generation if necessary.",
-            ],
-            # Provide empty but schema-conforming structures
-            "business_problems": [],
-            "scope_definition": {
-                "time": [],
-                "geography": [],
-                "data": [],
-                "systems": [],
-                "outputs": [],
-            },
-            "kpi_definitions": [],
-            "segmentation_clustering": {
-                "features": [],
-                "methods": [],
-                "example_segments": [],
-            },
+    tables_meta = metadata_dict.get("tables", {}) if isinstance(metadata_dict, dict) else {}
+    tables: Dict[str, Any] = {}
+    for fname, tmeta in tables_meta.items():
+        if not isinstance(tmeta, dict):
+            continue
+        tables[fname] = {
+            "status": tmeta.get("status", "UNKNOWN"),
+            "rows_in": tmeta.get("rows_in", 0),
+            "rows_out": tmeta.get("rows_out", 0),
+            "schema_in": tmeta.get("schema_in", []),
+            "schema_out": tmeta.get("schema_out", []),
         }
 
-    json_out_path = reports_dir / "silver_run_agent_context.json"
+    json_data = {
+        "run_id": run_id,
+        "silver_run_id": silver_run_id,
+        "layer": "silver",
+        "source_layer": "bronze",
+        "bronze_run_id": run_id,
+        "generated_at_utc": generated_at,
+        "files_total": files_total,
+        "files_success": files_success,
+        "files_failed": files_failed,
+        "bronze_tables": tables,
+        "profile": profile,
+        "schema_overview": profile.get("schema_overview"),
+    }
+
+    json_out_path = output_dir / "silver_run_agent_context.json"
     json_out_path.write_text(
         json.dumps(json_data, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -517,17 +559,8 @@ def run_report_agent(
 if __name__ == "__main__":
     # Example call (adjust paths or read from args as needed)
     example_run_id = "TEST_000000_#abcdef"
-    example_bronze = "DUMMY_BRONZE"
-    example_dir = "artifacts/silver/" + example_run_id
-    example_metadata = os.path.join(example_dir, "data", "metadata.yaml")
-    example_log = os.path.join(example_dir, "data", "run_log.txt")
-    example_html = os.path.join(example_dir, "reports", "elt_report.html")
 
     run_report_agent(
-        silver_run_id=example_run_id,
-        bronze_run_id=example_bronze,
-        silver_run_dir=example_dir,
-        metadata_path=example_metadata,
-        log_path=example_log,
-        html_report_path=example_html,
+        run_id=example_run_id,
+        silver_run_id="DUMMY_SILVER",
     )

@@ -161,30 +161,16 @@ def run_silver_draft_step(repo_root: Path, log_dir: Path) -> StepResult:
     details = None
     log_path = log_dir / "silver_draft.log"
     try:
-        silver_root = repo_root / "artifacts" / "silver"
-        silver_run_id = find_latest_run_id(silver_root)
-        silver_run_dir = silver_root / silver_run_id
-        metadata_path = silver_run_dir / "data" / "metadata.yaml"
-        log_path_txt = silver_run_dir / "data" / "run_log.txt"
-        html_report_path = silver_run_dir / "reports" / "elt_report.html"
-
-        metadata = read_yaml(metadata_path)
-        bronze_run_id = metadata.get("run", {}).get("bronze_run_id")
-        if not bronze_run_id:
-            raise RuntimeError("Missing bronze_run_id in silver metadata")
+        bronze_root = repo_root / "artifacts" / "bronze"
+        bronze_run_id = find_latest_run_id(bronze_root)
 
         from agents.load_2_silver_layer_draft_agent import run_report_agent
 
         run_report_agent(
-            silver_run_id=silver_run_id,
-            bronze_run_id=bronze_run_id,
-            silver_run_dir=str(silver_run_dir),
-            metadata_path=str(metadata_path),
-            log_path=str(log_path_txt),
-            html_report_path=str(html_report_path),
+            run_id=bronze_run_id,
         )
         log_path.write_text(
-            f"Regenerated draft outputs for silver_run_id={silver_run_id}\n",
+            f"Regenerated draft outputs for bronze_run_id={bronze_run_id}\n",
             encoding="utf-8",
         )
     except FileNotFoundError as exc:

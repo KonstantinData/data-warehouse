@@ -1,0 +1,13 @@
+{
+  "run_id": "20260116_230100_#70316663",
+  "target_path": "src\\runs\\load_3_gold_layer.py",
+  "system_prompt": "docs\\prompts\\systemprompt Senior Principal Data Engineer.txt",
+  "working_prompt": "docs\\prompts\\code_review_prompt.txt",
+  "timings": {
+    "code_quality_and_maintainability": 17.572271099998034,
+    "code_architecture_and_operations": 17.21238140000787,
+    "code_security_governance_compliance": 22.04302290000487,
+    "orchestrator": 34.777821399999084,
+    "total": 91.61578179999196
+  }
+}

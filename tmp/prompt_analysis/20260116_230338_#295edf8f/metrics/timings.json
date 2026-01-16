@@ -1,0 +1,13 @@
+{
+  "run_id": "20260116_230338_#295edf8f",
+  "target_path": "src\\runs\\load_summary_report.py",
+  "system_prompt": "docs\\prompts\\systemprompt Senior Principal Data Engineer.txt",
+  "working_prompt": "docs\\prompts\\code_review_prompt.txt",
+  "timings": {
+    "code_quality_and_maintainability": 23.54039009999542,
+    "code_architecture_and_operations": 14.289985499999602,
+    "code_security_governance_compliance": 19.133286399999633,
+    "orchestrator": 30.46461020001152,
+    "total": 87.43694110000797
+  }
+}

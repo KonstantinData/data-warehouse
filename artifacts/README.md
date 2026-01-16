@@ -1,6 +1,6 @@
 # Generated Outputs & ELT Artifacts
 
-This folder contains all generated artifacts from ELT runs — including  **Bronze** ,  **Silver** , and **Gold** layer outputs, as well as reports and supporting files. Each run produces timestamped folders that encapsulate both data and metadata for reproducibility, auditing, and downstream use.
+This directory contains all **generated outputs** from ELT runs across Bronze, Silver, and Gold layers — plus machine-learning artifacts and global reports. It is purpose-built to support reproducibility, traceability, and analytical consumption.
 
 ---
 
@@ -11,8 +11,8 @@ This folder contains all generated artifacts from ELT runs — including  **Bron
 3. Bronze Layer Artifacts
 4. Silver Layer Artifacts
 5. Gold Layer Artifacts
-6. Reports
-7. Temporary & Support Files
+6. Machine Learning Artifacts
+7. Global Reports
 8. Best Practices
 9. Cleanup & Retention
 
@@ -20,14 +20,7 @@ This folder contains all generated artifacts from ELT runs — including  **Bron
 
 ## 1. Purpose
 
-The `artifacts/` directory serves as the canonical storage location for outputs from your ELT pipeline. It is structured to:
-
-* **Separate layers** (Bronze, Silver, Gold) clearly
-* **Version each run** by timestamp + hash
-* **Store both data and descriptive metadata**
-* **Make results reproducible and auditable**
-
-This layout supports both manual inspection and automated consumption by BI/ML workflows.
+The `artifacts/` folder is the canonical storage location for all persistent outputs created by your ELT pipeline. It organizes artifacts by layer and run, ensuring each run is identifiable, immutable, and usable for analytics, reporting, or model training.
 
 ---
 
@@ -46,101 +39,106 @@ artifacts/
 │       └── tmp/
 ├── gold/
 │   ├── marts/
-│   ├── planning/
-│   └── ml/
+│   └── planning/
+├── ml/
 └── reports/
 ```
 
-Each section below describes the contents and purpose of these folders.
+Each section below explains the purpose of these folders.
 
 ---
 
 ## 3. Bronze Layer Artifacts
 
-Path:
+**Location:**
 
 ```
 artifacts/bronze/<timestamp>_#<hash>/
 ```
 
-### Contents
+**Contents:**
 
-* `data/`:
-  Raw snapshots of ingested datasets, cleaned only to the extent necessary for persistence. Typically includes CSV/Parquet files.
-* `reports/`:
-  Run reports and metadata (e.g., schemas, row counts, timing). Useful for lineage tracking and data quality.
+* `data/`: Raw ingested data slices (CSV, Parquet, etc.)
+* `reports/`: Metadata and run diagnostics (schema, row counts, timing)
 
-### Purpose
+**Purpose:**
 
-The Bronze layer represents **raw ingestion** results — the first persist phase after reading source data. This layer should be treated as immutable once generated.
+The Bronze layer captures the **initial ingestion** of source data with minimal transformation — suitable for lineage tracking and replays.
 
 ---
 
 ## 4. Silver Layer Artifacts
 
-Path:
+**Location:**
 
 ```
 artifacts/silver/<timestamp>_#<hash>/
 ```
 
-### Contents
+**Contents:**
 
-* `data/`:
-  Standardized/cleaned tables suitable for analytical use or further processing.
-* `reports/`:
-  Metadata and diagnostics related to transformations — profiling statistics, row counts, and validation reports.
-* `tmp/`:
-  Temporary staging files used during processing.
+* `data/`: Cleaned and standardized data sets
+* `reports/`: Summary metrics and validation reports
+* `tmp/`: Temporary/staging files used during processing
 
-### Purpose
+**Purpose:**
 
-Silver outputs are **cleaned, typed, and validated** versions of Bronze data. They serve as the foundation for business logic and aggregation.
+Silver artifacts represent **cleaned, standardized, and validated** versions of Bronze data — ready for downstream use in modelling or business logic.
 
 ---
 
 ## 5. Gold Layer Artifacts
 
-Path:
-
 ```
 artifacts/gold/
+├── marts/
+├── planning/
 ```
 
-### Subdirectories
+**`planning/`:**
+Intermediate artifacts used during Gold layer planning (e.g., build plans, config templates).
 
-* `planning/`:
-  Stores intermediate artifacts from Gold layer planning — configuration files, build plans, mappings.
-* `marts/`:
-  Final business-ready tables and models (e.g., dimensional marts, aggregated views).
-* `ml/`:
-  Artifacts tailored for machine learning workflows — features, training snapshots, etc.
+**`marts/`:**
+Final business-ready artifacts such as dimensional marts, aggregates, or curated data models.
 
-### Purpose
+**Purpose:**
 
-Gold layer artifacts represent **business-ready models** used directly by reporting systems, dashboards, and ML models.
+The Gold layer contains artifacts that are **business-ready and consumption-optimized** — whether for dashboards, BI tools, or reporting.
 
 ---
 
-## 6. Reports
+## 6. Machine Learning Artifacts
+
+```
+artifacts/ml/
+```
+
+**Purpose:**
+
+This directory stores data and outputs specific to machine learning workflows, including:
+
+* Feature sets
+* Training snapshots
+* Model input datasets
+* Performance metrics
+
+These artifacts are derived from Silver/Gold outputs and optimized for ML consumption.
+
+---
+
+## 7. Global Reports
 
 ```
 artifacts/reports/
 ```
 
-This directory aggregates **global run reports** across layers — e.g., summaries, cross-layer dashboards, KPIs, and centralized diagnostics. It is not tied to any single timestamped run.
+This folder contains **cross-layer or global analytics reports** such as:
 
-Reports may include:
+* Summarized run dashboards (e.g., combined Bronze/Silver/Gold summaries)
+* KPIs and audit dashboards
+* Consolidated logs or validation outputs
 
-* HTML dashboards
-* CSVs with lineage/metrics
-* Consolidated logs
-
----
-
-## 7. Temporary & Support Files
-
-Temporary files under Silver (`tmp/`) are typically ephemeral and may be cleaned between runs.
+Reports here are not tied to a single timestamped run but may reference multiple runs or layers.
 
 ---
 
@@ -148,45 +146,55 @@ Temporary files under Silver (`tmp/`) are typically ephemeral and may be cleaned
 
 ### Immutable Runs
 
-Each run’s folder is **timestamped and hashed** to ensure immutability and traceability.
-
-Do not modify existing run artifacts manually. Instead, generate a new run for any changes.
+Each run is timestamped + hash-tagged (e.g., `20260115_174457_#c2cea56`) to guarantee immutability and auditability. **Do not modify** artifacts after creation.
 
 ### Naming Conventions
 
+Ensure consistency across folders:
+
 ```
-<YYYYMMDDHHMMSS>_#<commit|hash>
+YYYYMMDDHHMMSS_#<hash>
 ```
 
-This pattern ensures chronological ordering and linkage to version control.
+This ensures chronological ordering and traceability to version control.
 
-### Metadata
+### Metadata & Lineage
 
-Always inspect the `reports/` metadata for:
+Always inspect the metadata in `reports/` for:
 
-* Row counts
-* Schema details
-* Validation results
+* Schema definitions
+* Source row counts
+* Validation checkpoints
+* Transformation logs
+
+This supports debugging and compliance requirements.
 
 ---
 
 ## 9. Cleanup & Retention
 
-Depending on storage policies, you may want to implement:
+Establish archive and retention policies tailored to storage constraints and governance needs. Common guidelines include:
 
-* Archival policies for old runs
-* Storage quotas per layer
-* Automatic cleanup of `tmp/` directories
+* Retain the latest **N runs** per layer
+* Archive older runs to cold storage
+* Clean `tmp/` directories periodically
 
-Automated cleanups should preserve at least the most recent **N runs** in each layer.
+Cleanup operations should **never delete** artifacts used by current analytic dashboards or ML models.
 
 ---
 
-## Summary of Layers
+## Summary
 
-| Layer   | Location                                 | Purpose                                  |
-| ------- | ---------------------------------------- | ---------------------------------------- |
-| Bronze  | `artifacts/bronze/<timestamp>_#<hash>` | Raw ingestion snapshots                  |
-| Silver  | `artifacts/silver/<timestamp>_#<hash>` | Cleaned/standardized tables              |
-| Gold    | `artifacts/gold/`                      | Business models & features (marts, ML)   |
-| Reports | `artifacts/reports/`                   | Consolidated diagnostics & run summaries |
+| Layer         | Location                               | Purpose                                |
+| ------------- | -------------------------------------- | -------------------------------------- |
+| Bronze        | `artifacts/bronze/<timestamp>_#<hash>` | Raw ingestion snapshots                |
+| Silver        | `artifacts/silver/<timestamp>_#<hash>` | Standardized, validated data           |
+| Gold          | `artifacts/gold/marts`                 | Business-ready models                  |
+| Gold Planning | `artifacts/gold/planning`              | Intermediate build plans               |
+| ML            | `artifacts/ml/`                        | Machine learning preparatory artifacts |
+| Reports       | `artifacts/reports/`                   | Cross-layer and consolidated analytics |
+
+* a **sample artifact file index**
+* or a **policy template** for artifact retention
+
+Let me know what’s next!

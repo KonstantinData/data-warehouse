@@ -3,20 +3,21 @@ load_3_gold_layer_builder_agent.py
 
 ROLE:
 - Builds the final Gold ETL script using:
-    (1) latest gold_mart_plan.json
-    (2) latest gold_design_report.md
-    (3) src/templates/load_3_gold_layer_template.py
+    (1) artifacts/silver/<run_id>/metadata.yaml
+    (2) artifacts/silver/<run_id>/reports/elt_report.html
+    (3) tmp/draft_reports/gold/<run_id>/gold_run_agent_context.json
+    (4) tmp/draft_reports/gold/<run_id>/gold_run_human_report.md
+    (5) src/templates/load_3_gold_layer_template.py
 
-- Generates a new src/runs/load_3_gold_layer.py based on LLM reasoning
+- Generates a new src/runs/load_3_gold_layer.py deterministically
 - ALWAYS overwrites the script
-- Executes the script automatically with the correct silver_run_id
+- Does NOT execute the script; the orchestrator controls execution
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -36,20 +37,6 @@ def find_repo_root(start: Path) -> Path:
             return cur
         cur = cur.parent
     return start.resolve()
-
-
-def find_latest_silver_run_id(silver_root: Path) -> str:
-    run_ids = [p.name for p in silver_root.iterdir() if p.is_dir()]
-    if not run_ids:
-        raise FileNotFoundError("No Silver runs found!")
-    return sorted(run_ids)[-1]
-
-
-def find_latest_planning_dir(planning_root: Path) -> Path:
-    runs = [p for p in planning_root.iterdir() if p.is_dir()]
-    if not runs:
-        raise FileNotFoundError("No planning runs found!")
-    return sorted(runs, key=lambda x: x.name)[-1]
 
 
 def read_text(path: Path) -> str:
@@ -96,9 +83,11 @@ def extract_python_block(content: str) -> str:
 def generate_gold_script(
     client: OpenAI,
     template_text: str,
-    mart_plan: Dict[str, Any],
-    design_md: str,
-    model_name: str = "gpt-4.1"
+    silver_metadata: Dict[str, Any],
+    silver_elt_report_html: str,
+    gold_agent_context: Dict[str, Any],
+    gold_human_report_md: str,
+    model_name: str = "gpt-4.1",
 ) -> str:
 
     system_msg = {
@@ -116,16 +105,21 @@ def generate_gold_script(
             "Generate a final Gold-layer ETL script as a full Python module. "
             "Rules:\n"
             "- Use the template structure exactly.\n"
-            "- Implement mart definitions found in gold_mart_plan.json.\n"
-            "- Implement business logic and grain rules from the design report.\n"
+            "- Implement mart definitions found in the Gold run context.\n"
+            "- Implement business logic and grain rules from the Gold human report.\n"
+            "- Use the Silver metadata and ELT report for schema fidelity.\n"
             "- Do NOT invent tables or columns – only use what is present.\n"
             "- Output ONLY Python code, no markdown.\n\n"
             "=========== TEMPLATE ===========\n"
             f"{template_text}\n\n"
-            "=========== GOLD MART PLAN ===========\n"
-            f"{json.dumps(mart_plan, indent=2)}\n\n"
-            "=========== GOLD DESIGN REPORT ===========\n"
-            f"{design_md}\n\n"
+            "=========== SILVER METADATA (YAML) ===========\n"
+            f"{yaml.safe_dump(silver_metadata, sort_keys=False)}\n\n"
+            "=========== SILVER ELT REPORT (HTML) ===========\n"
+            f"{silver_elt_report_html}\n\n"
+            "=========== GOLD RUN CONTEXT ===========\n"
+            f"{json.dumps(gold_agent_context, indent=2)}\n\n"
+            "=========== GOLD HUMAN REPORT ===========\n"
+            f"{gold_human_report_md}\n\n"
             "RETURN ONLY THE PYTHON CODE."
         )
     }
@@ -133,7 +127,10 @@ def generate_gold_script(
     response = client.chat.completions.create(
         model=model_name,
         messages=[system_msg, user_msg],
-        temperature=0.1
+        temperature=0,
+        top_p=1,
+        frequency_penalty=0,
+        presence_penalty=0,
     )
 
     raw = response.choices[0].message.content
@@ -149,28 +146,25 @@ def main() -> int:
     print(f"[BUILDER] REPO_ROOT={repo_root}")
 
     silver_root = repo_root / "artifacts" / "silver"
-    planning_root = repo_root / "artifacts" / "gold" / "planning"
 
-    # Silver Run ID
-    if len(sys.argv) > 1:
-        silver_run_id = sys.argv[1]
-    else:
-        silver_run_id = find_latest_silver_run_id(silver_root)
+    if len(sys.argv) < 2:
+        raise SystemExit("Usage: load_3_gold_layer_builder_agent.py <run_id>")
 
+    silver_run_id = sys.argv[1]
     print(f"[BUILDER] Using SILVER_RUN_ID={silver_run_id}")
 
-    # Planning directory for this run
-    planning_dir = planning_root / silver_run_id
-    if not planning_dir.exists():
-        planning_dir = find_latest_planning_dir(planning_root)
-        print(f"[BUILDER] No matching planning directory; using latest: {planning_dir.name}")
+    silver_run_dir = silver_root / silver_run_id
+    metadata_path = silver_run_dir / "metadata.yaml"
+    elt_report_path = silver_run_dir / "reports" / "elt_report.html"
 
-    # Read planning artifacts
-    mart_plan_path = planning_dir / "data" / "gold_mart_plan.json"
-    design_md_path = planning_dir / "reports" / "gold_design_report.md"
+    gold_report_dir = repo_root / "tmp" / "draft_reports" / "gold" / silver_run_id
+    gold_context_path = gold_report_dir / "gold_run_agent_context.json"
+    gold_human_report_path = gold_report_dir / "gold_run_human_report.md"
 
-    mart_plan = read_json(mart_plan_path)
-    design_md = read_text(design_md_path)
+    silver_metadata = read_yaml(metadata_path)
+    silver_elt_report_html = read_text(elt_report_path)
+    gold_agent_context = read_json(gold_context_path)
+    gold_human_report_md = read_text(gold_human_report_path)
 
     # Read template
     template_path = repo_root / "src" / "templates" / "load_3_gold_layer_template.py"
@@ -184,26 +178,17 @@ def main() -> int:
     python_code = generate_gold_script(
         client=client,
         template_text=template_text,
-        mart_plan=mart_plan,
-        design_md=design_md
+        silver_metadata=silver_metadata,
+        silver_elt_report_html=silver_elt_report_html,
+        gold_agent_context=json.loads(json.dumps(gold_agent_context, sort_keys=True)),
+        gold_human_report_md=gold_human_report_md,
     )
 
     # Save script
     runner_path = repo_root / "src" / "runs" / "load_3_gold_layer.py"
     runner_path.write_text(python_code, encoding="utf-8")
     print(f"[BUILDER] Wrote load_3_gold_layer.py to: {runner_path}")
-
-    if os.getenv("SKIP_RUNNER_EXECUTION") == "1":
-        print("[BUILDER] SKIP_RUNNER_EXECUTION=1 set; skipping runner execution.")
-        return 0
-
-    # Execute script
-    print("[BUILDER] Executing generated Gold ETL script...")
-    cmd = [sys.executable, str(runner_path), silver_run_id]
-    result = subprocess.run(cmd, cwd=repo_root)
-    print(f"[BUILDER] Script exited with code: {result.returncode}")
-
-    return result.returncode
+    return 0
 
 
 if __name__ == "__main__":

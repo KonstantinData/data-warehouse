@@ -433,7 +433,7 @@ def main() -> int:
 
     # Input paths (Silver)
     agent_ctx_path = silver_run_dir / "reports" / "silver_run_agent_context.json"
-    metadata_path = silver_run_dir / "data" / "metadata.yaml"
+    metadata_path = silver_run_dir / "metadata.yaml"
 
     silver_agent_context = read_json(agent_ctx_path)
     silver_metadata = read_yaml(metadata_path)

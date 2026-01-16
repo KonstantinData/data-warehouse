@@ -7,7 +7,7 @@ Responsibilities:
 - Reads metadata.yaml, run_log.txt, and CSVs from the Bronze run
 - Uses the Data Analytics Process (steps 1–10) as guiding framework
 - Calls an OpenAI LLM using environment variables (OPEN_AI_KEY / OPENAI_API_KEY)
-- Produces (under artifacts/tmp/draft_reports/silver/<run_id>/):
+- Produces (under tmp/draft_reports/silver/<run_id>/):
     1) silver_run_human_report.md   (human-readable Markdown report)
     2) silver_run_agent_context.json (structured context for downstream agents)
 
@@ -418,7 +418,7 @@ def run_report_agent(
     model_name: str = "gpt-4.1-mini",
 ) -> None:
     """
-    Produces two outputs in artifacts/tmp/draft_reports/silver/<run_id>/:
+    Produces two outputs in tmp/draft_reports/silver/<run_id>/:
       - silver_run_human_report.md
       - silver_run_agent_context.json
     """
@@ -434,7 +434,7 @@ def run_report_agent(
     client = _build_openai_client()
 
     # Paths
-    output_dir = Path("artifacts") / "tmp" / "draft_reports" / "silver" / run_id
+    output_dir = Path("tmp") / "draft_reports" / "silver" / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
     metadata_text = _read_text(metadata_path)

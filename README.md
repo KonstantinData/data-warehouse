@@ -159,6 +159,37 @@ raw/
 ├── source_crm/   # CSV inputs
 └── source_erp/   # CSV inputs
 ```
+> Note: This repository implements a **data warehouse**, not a lakehouse.
+> CSV files under `raw/` act as reproducible stand-ins for upstream source systems.
+> In production, these sources would typically be databases or upstream lakehouse
+> tables (e.g. Delta/Iceberg), which feed the warehouse but are not part of it.
+
+
+Production equivalents (examples):
+
+- **Database (MySQL/Postgres/MSSQL):**
+  Extract via incremental watermark or CDC into Bronze snapshots.
+
+- **Upstream lakehouse systems (e.g. Databricks with Delta/Iceberg):**
+  Read curated upstream tables as a *source* and snapshot them into Bronze.
+  These systems are external to the warehouse and act purely as data providers.
+
+- **Object storage (S3/ADLS/GCS):**
+  Ingest partitioned files with manifests and checksums into Bronze.
+
+> Bronze represents the warehouse-internal landing and snapshot layer,
+> independent of whether the upstream source is a database, file system, or lakehouse table.
+
+
+Source contract (minimum expectations):
+
+- Deterministic snapshot boundary (timestamp / watermark / CDC version).
+- Stable table identifiers (source system + entity name).
+- Basic metadata capture (row counts, schema, file checksums or query hash).
+
+
+
+
 
 ### Minimal end-to-end run (manual)
 

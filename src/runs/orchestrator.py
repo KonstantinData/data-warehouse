@@ -115,6 +115,13 @@ def read_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+def ensure_src_on_path(repo_root: Path) -> None:
+    src_root = repo_root / "src"
+    src_path = str(src_root)
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+
 def build_python_cmd(repo_root: Path, relative_path: Path, run_id: Optional[str] = None) -> List[str]:
     cmd = [sys.executable, str(repo_root / relative_path)]
     if run_id:
@@ -209,6 +216,7 @@ def run_silver_draft_step(repo_root: Path, log_dir: Path) -> StepResult:
         bronze_root = repo_root / "artifacts" / "bronze"
         bronze_run_id = find_latest_run_id(bronze_root)
 
+        ensure_src_on_path(repo_root)
         from agents.load_2_silver_layer_draft_agent import run_report_agent
 
         run_report_agent(

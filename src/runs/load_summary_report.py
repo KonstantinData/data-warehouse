@@ -76,7 +76,8 @@ def read_yaml(path: Path) -> Dict[str, Any]:
 def write_json(payload: Dict[str, Any], path: Path) -> None:
     """Write JSON to disk with exception handling."""
     try:
-        atomic_write_text(json.dumps(payload, indent=2), path)
+        serialized = json.dumps(payload, indent=2)
+        atomic_write_text(serialized, path)
     except OSError as exc:
         LOGGER.error("Failed to write JSON report", extra={"path": str(path), "error": str(exc)})
         raise
@@ -443,7 +444,8 @@ def write_summary_report(
 
     md_path = output_dir / SUMMARY_MD
     try:
-        atomic_write_text("\n".join(md_lines), md_path)
+        markdown = "\n".join(md_lines)
+        atomic_write_text(markdown, md_path)
     except OSError as exc:
         LOGGER.error("Failed to write Markdown report", extra={"path": str(md_path), "error": str(exc)})
         raise

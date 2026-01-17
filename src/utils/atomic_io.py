@@ -8,6 +8,8 @@ import pandas as pd
 
 
 def _fsync_directory(directory: Path) -> None:
+    if not hasattr(os, "O_DIRECTORY"):
+        return
     try:
         fd = os.open(directory, os.O_DIRECTORY)
     except OSError:

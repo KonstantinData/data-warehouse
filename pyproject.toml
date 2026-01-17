@@ -3,9 +3,9 @@ requires = ["setuptools>=67.8.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mysql-data-warehouse"
+name = "agentic-elt-data-warehouse"
 version = "0.1.0"
-description = "Data Warehouse project with Python ELT, pandas ETL, PyTorch ML, and analytics artifacts"
+description = "Local, run-based ELT system that transforms raw CRM/ERP CSV inputs into Medallion-layer artifacts"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [

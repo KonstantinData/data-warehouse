@@ -36,6 +36,12 @@ import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.utils.secrets import (
+    SENSITIVE_ENV_KEYS,
+    get_required_secret,
+    redact_dict,
+    redact_text,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,15 +51,6 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BACKOFF_SECONDS = 1.5
 DEFAULT_LOG_LEVEL = "INFO"
-ENV_SNAPSHOT_KEYS = (
-    "OPEN_AI_KEY",
-    "OPENAI_API_KEY",
-    "GOLD_DRAFT_MODEL",
-    "GOLD_DRAFT_MAX_RETRIES",
-    "GOLD_DRAFT_BACKOFF_SECONDS",
-    "GOLD_DRAFT_LOG_LEVEL",
-)
-REDACTED_ENV_KEYS = {"OPEN_AI_KEY", "OPENAI_API_KEY"}
 REQUIRED_PLAN_KEYS = {
     "silver_run_id",
     "gold_layer_objective",
@@ -310,11 +307,12 @@ def load_config() -> AgentConfig:
     if backoff_seconds <= 0:
         raise ConfigError("GOLD_DRAFT_BACKOFF_SECONDS must be > 0.")
 
-    api_key = os.getenv("OPEN_AI_KEY") or os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    try:
+        api_key = get_required_secret("OPEN_AI_KEY", "OPENAI_API_KEY")
+    except RuntimeError as exc:
         raise ConfigError(
             "No OPEN_AI_KEY or OPENAI_API_KEY found; cannot call OpenAI LLM."
-        )
+        ) from exc
 
     return AgentConfig(
         model_name=model_name,
@@ -333,13 +331,18 @@ def setup_logging(log_level: str) -> None:
 
 
 def build_env_snapshot() -> Dict[str, Any]:
+    snapshot_keys = (
+        *SENSITIVE_ENV_KEYS,
+        "GOLD_DRAFT_MODEL",
+        "GOLD_DRAFT_MAX_RETRIES",
+        "GOLD_DRAFT_BACKOFF_SECONDS",
+        "GOLD_DRAFT_LOG_LEVEL",
+    )
     snapshot: Dict[str, Any] = {}
-    for key in ENV_SNAPSHOT_KEYS:
+    for key in snapshot_keys:
         if key in os.environ:
-            snapshot[key] = (
-                "<redacted>" if key in REDACTED_ENV_KEYS else os.environ[key]
-            )
-    return snapshot
+            snapshot[key] = os.environ[key]
+    return redact_dict(snapshot)
 
 
 def write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -723,12 +726,14 @@ def main() -> int:
 
         write_json(
             inputs_path,
-            {
-                "requested_run_id": requested_run_id,
-                "silver_run_id": silver_run_id,
-                "silver_root": str(silver_root),
-                "planning_root": str(planning_root),
-            },
+            redact_dict(
+                {
+                    "requested_run_id": requested_run_id,
+                    "silver_run_id": silver_run_id,
+                    "silver_root": str(silver_root),
+                    "planning_root": str(planning_root),
+                }
+            ),
         )
         write_json(env_snapshot_path, build_env_snapshot())
 
@@ -745,7 +750,7 @@ def main() -> int:
             max_retries=config.max_retries,
             backoff_seconds=config.backoff_seconds,
         )
-        design_report_path.write_text(design_md, encoding="utf-8")
+        design_report_path.write_text(redact_text(design_md), encoding="utf-8")
         LOGGER.info("Wrote Gold design report to: %s", design_report_path)
 
         # 2) Machine-readable mart plan
@@ -758,7 +763,7 @@ def main() -> int:
             max_retries=config.max_retries,
             backoff_seconds=config.backoff_seconds,
         )
-        write_json(mart_plan_path, mart_plan)
+        write_json(mart_plan_path, redact_dict(mart_plan))
         LOGGER.info("Wrote Gold mart plan to: %s", mart_plan_path)
 
         LOGGER.info("Gold-layer planning completed successfully.")

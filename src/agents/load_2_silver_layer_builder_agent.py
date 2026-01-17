@@ -24,6 +24,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.utils.run_id import validate_run_id
 from src.utils.secrets import get_required_secret, redact_dict, redact_text
 
 # -------------------------------------------------------------
@@ -195,6 +196,7 @@ def main() -> int:
         raise SystemExit("Usage: load_2_silver_layer_builder_agent.py <run_id>")
 
     run_id = sys.argv[1]
+    validate_run_id(run_id)
     logger.info(f"[BUILDER] Using RUN_ID={run_id}")
 
     report_dir = repo_root / "tmp" / "draft_reports" / "silver" / run_id

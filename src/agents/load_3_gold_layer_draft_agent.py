@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import sys
 import time
 from dataclasses import dataclass
@@ -36,6 +35,7 @@ import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.utils.run_id import RUN_ID_RE, parse_run_id, validate_run_id as validate_run_id_strict
 from src.utils.secrets import (
     SENSITIVE_ENV_KEYS,
     get_required_secret,
@@ -45,8 +45,6 @@ from src.utils.secrets import (
 
 LOGGER = logging.getLogger(__name__)
 
-RUN_ID_PATTERN = r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[A-Za-z0-9]+)$"
-RUN_ID_RE = re.compile(RUN_ID_PATTERN)
 DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BACKOFF_SECONDS = 1.5
@@ -113,8 +111,11 @@ def find_repo_root(start: Path) -> Path:
 
 
 def extract_run_suffix(run_id: str) -> str | None:
-    match = RUN_ID_RE.match(run_id)
-    return match.group("suffix") if match else None
+    try:
+        _, suffix = parse_run_id(run_id)
+        return suffix
+    except ValueError:
+        return None
 
 
 def find_latest_silver_run_id(
@@ -146,7 +147,9 @@ def find_latest_silver_run_id(
     if not run_ids:
         raise FileNotFoundError(f"No Silver runs found under: {silver_root}")
 
-    return sorted(run_ids)[-1]
+    run_id = sorted(run_ids)[-1]
+    validate_run_id_strict(run_id)
+    return run_id
 
 
 def read_text(path: Path) -> str:
@@ -175,23 +178,15 @@ def read_yaml(path: Path) -> Dict[str, Any]:
         raise FileReadError(f"Failed to read YAML file: {path}") from exc
 
 
-def validate_run_id(run_id: str) -> None:
-    if Path(run_id).name != run_id:
-        raise ValueError("Run id must not contain path separators.")
-    if not RUN_ID_RE.match(run_id):
-        raise ValueError(
-            f"Run id '{run_id}' does not match expected pattern {RUN_ID_PATTERN}."
-        )
-
-
 def resolve_silver_run_id(silver_root: Path, requested_run_id: str | None) -> str:
     if requested_run_id:
-        validate_run_id(requested_run_id)
+        validate_run_id_strict(requested_run_id)
         return requested_run_id
     return find_latest_silver_run_id(silver_root)
 
 
 def resolve_silver_context_run_id(silver_root: Path, silver_run_id: str) -> str:
+    validate_run_id_strict(silver_run_id)
     agent_ctx_path = silver_root / silver_run_id / "reports" / "silver_run_agent_context.json"
     if agent_ctx_path.exists():
         return silver_run_id

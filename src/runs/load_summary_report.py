@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 import yaml
 
 from src.utils.atomic_io import atomic_write_text
+from src.utils.run_id import validate_run_id as validate_run_id_strict
 LOGGER = logging.getLogger(__name__)
 
 ARTIFACTS_DIR = "artifacts"
@@ -26,7 +26,6 @@ DATA_DIR = "data"
 METADATA_FILE = "metadata.yaml"
 SUMMARY_JSON = "summary_report.json"
 SUMMARY_MD = "summary_report.md"
-RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 DQ_KEYS = ("dq_summary", "dq", "data_quality")
 SUMMARY_KEY = "summary"
@@ -85,8 +84,7 @@ def write_json(payload: Dict[str, Any], path: Path) -> None:
 
 def validate_run_id(run_id: str) -> None:
     """Validate run_id to prevent path traversal or unexpected input."""
-    if not RUN_ID_PATTERN.fullmatch(run_id):
-        raise ValueError(f"Invalid run_id format: {run_id!r}")
+    validate_run_id_strict(run_id)
 
 
 def validate_metadata_schema(metadata: Dict[str, Any], path: Path) -> List[str]:
@@ -157,6 +155,10 @@ def summarize_bronze(repo_root: Path, run_id: Optional[str]) -> Dict[str, Any]:
     """Summarize bronze layer metadata for a run."""
     if not run_id:
         return {"run_id": None, "status": "missing"}
+    try:
+        validate_run_id_strict(run_id)
+    except ValueError as exc:
+        return {"run_id": run_id, "status": "invalid", "error": str(exc)}
     root = repo_root / ARTIFACTS_DIR / "bronze" / run_id
     metadata_path = root / DATA_DIR / METADATA_FILE
     if not metadata_path.exists():
@@ -214,6 +216,10 @@ def summarize_silver(repo_root: Path, run_id: Optional[str]) -> Dict[str, Any]:
     """Summarize silver layer metadata for a run."""
     if not run_id:
         return {"run_id": None, "status": "missing"}
+    try:
+        validate_run_id_strict(run_id)
+    except ValueError as exc:
+        return {"run_id": run_id, "status": "invalid", "error": str(exc)}
     root = repo_root / ARTIFACTS_DIR / "silver" / run_id
     metadata_path = root / METADATA_FILE
     if not metadata_path.exists():
@@ -266,6 +272,10 @@ def summarize_gold(repo_root: Path, run_id: Optional[str]) -> Dict[str, Any]:
     """Summarize gold layer metadata for a run."""
     if not run_id:
         return {"run_id": None, "status": "missing"}
+    try:
+        validate_run_id_strict(run_id)
+    except ValueError as exc:
+        return {"run_id": run_id, "status": "invalid", "error": str(exc)}
     root = repo_root / ARTIFACTS_DIR / "gold" / "marts" / run_id
     metadata_path = root / METADATA_FILE
     if not metadata_path.exists():

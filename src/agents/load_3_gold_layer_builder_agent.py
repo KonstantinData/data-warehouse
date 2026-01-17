@@ -32,6 +32,7 @@ import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.utils.run_id import RUN_ID_RE, validate_run_id
 from src.utils.secrets import get_required_secret, redact_dict, redact_text
 
 # -------------------------------------------------------------
@@ -46,9 +47,6 @@ def find_repo_root(start: Path) -> Path:
     return start.resolve()
 
 
-RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[A-Za-z0-9]+)$")
-
-
 def find_latest_silver_run_id(silver_root: Path) -> str:
     if not silver_root.exists():
         raise FileNotFoundError(f"Silver root does not exist: {silver_root}")
@@ -61,11 +59,16 @@ def find_latest_silver_run_id(silver_root: Path) -> str:
     if not run_ids:
         raise FileNotFoundError(f"No Silver runs found under: {silver_root}")
 
-    return sorted(run_ids)[-1]
+    run_id = sorted(run_ids)[-1]
+    validate_run_id(run_id)
+    return run_id
 
 
 def resolve_silver_run_id(silver_root: Path, requested_run_id: str | None) -> str:
-    return requested_run_id or find_latest_silver_run_id(silver_root)
+    if requested_run_id:
+        validate_run_id(requested_run_id)
+        return requested_run_id
+    return find_latest_silver_run_id(silver_root)
 
 
 def read_text(path: Path) -> str:
@@ -249,6 +252,7 @@ def main(argv: List[str] | None = None, llm_client_factory: Callable[[], OpenAI]
     repo_root = find_repo_root(Path(__file__).resolve())
     silver_root = repo_root / "artifacts" / "silver"
     silver_run_id = resolve_silver_run_id(silver_root, args.silver_run_id)
+    validate_run_id(silver_run_id)
     correlation_id = uuid.uuid4().hex
     logger = setup_logger(silver_run_id, correlation_id)
     config = BuilderConfig(repo_root=repo_root, silver_run_id=silver_run_id, model_name=args.model)

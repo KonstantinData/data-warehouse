@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
-import re
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -28,6 +27,7 @@ import pandas as pd
 import yaml
 
 from src.utils.atomic_io import atomic_to_csv, atomic_write_text
+from src.utils.run_id import RUN_ID_RE, format_run_id, parse_run_id, validate_run_id
 
 """
 load_3_gold_layer.py
@@ -104,9 +104,6 @@ GOLD_MART_PLAN (injected by agent):
 - dict with at least: {"mart_list": ["gold_dim_customer", ...]}
 - If absent or invalid, all marts are treated as enabled.
 """
-
-RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[0-9a-fA-F]{6,32})$")
-
 
 HTML_REPORT_TEMPLATE = """
 <html>
@@ -231,7 +228,9 @@ def find_latest_run_id(root: Path) -> str:
     if not run_ids:
         raise FileNotFoundError(f"No runs found in: {root}")
 
-    return sorted(run_ids)[-1]
+    run_id = sorted(run_ids)[-1]
+    validate_run_id(run_id)
+    return run_id
 
 
 def resolve_silver_data_dir(silver_run_id: str) -> Path:
@@ -240,6 +239,7 @@ def resolve_silver_data_dir(silver_run_id: str) -> Path:
       SILVER_ROOT = artifacts/silver
       SILVER_ROOT = artifacts/silver/elt (legacy)
     """
+    validate_run_id(silver_run_id)
     d = SILVER_ROOT / silver_run_id / "data"
     if d.exists():
         return d
@@ -257,12 +257,9 @@ def resolve_silver_data_dir(silver_run_id: str) -> Path:
 
 
 def make_gold_run_id_from_silver(silver_run_id: str, now: Optional[datetime] = None) -> str:
-    m = RUN_ID_RE.match(silver_run_id)
-    if not m:
-        raise ValueError(f"Invalid silver run_id format: {silver_run_id}")
-    suffix = m.group("suffix")
+    _, suffix = parse_run_id(silver_run_id)
     now_dt = now or utc_now()
-    return f"{now_dt.strftime('%Y%m%d_%H%M%S')}_#{suffix}"
+    return format_run_id(now_dt.strftime("%Y%m%d_%H%M%S"), suffix)
 
 
 def load_csv(folder: Path, filename: str) -> Optional[pd.DataFrame]:
@@ -764,6 +761,7 @@ def build_gold_wide_sales_enriched(
 # -----------------------------
 def main() -> int:
     silver_run_id = sys.argv[1] if len(sys.argv) > 1 else find_latest_run_id(SILVER_ROOT)
+    validate_run_id(silver_run_id)
     silver_data_dir = resolve_silver_data_dir(silver_run_id)
 
     start_dt = utc_now()
@@ -773,15 +771,20 @@ def main() -> int:
     else:
         requested_run_id = os.environ.get("RUN_ID") or os.environ.get("ORCHESTRATOR_RUN_ID")
 
-    if requested_run_id and RUN_ID_RE.match(requested_run_id):
-        gold_run_id = requested_run_id
-        run_id_source = "provided"
+    if requested_run_id:
+        try:
+            validate_run_id(requested_run_id)
+        except ValueError:
+            gold_run_id = make_gold_run_id_from_silver(silver_run_id, now=start_dt)
+            run_id_source = "generated"
+        else:
+            gold_run_id = requested_run_id
+            run_id_source = "provided"
     else:
         gold_run_id = make_gold_run_id_from_silver(silver_run_id, now=start_dt)
         run_id_source = "generated"
 
-    m = RUN_ID_RE.match(silver_run_id)
-    suffix = m.group("suffix") if m else None
+    _, suffix = parse_run_id(silver_run_id)
 
     gold_dir = GOLD_ROOT / gold_run_id
     data_dir = gold_dir / "data"
@@ -801,8 +804,10 @@ def main() -> int:
     outputs: List[Dict[str, Any]] = []
     errors: List[str] = []
     notes: List[str] = []
-    if requested_run_id and not RUN_ID_RE.match(requested_run_id):
-        notes.append(f"Requested run_id '{requested_run_id}' did not match expected format; generated run_id used instead.")
+    if requested_run_id and run_id_source != "provided":
+        notes.append(
+            f"Requested run_id '{requested_run_id}' did not match expected format; generated run_id used instead."
+        )
 
     log("RUN_START")
     log(f"silver_run_id={silver_run_id}")

@@ -43,7 +43,6 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
-import re
 import sys
 import time
 import traceback
@@ -55,6 +54,7 @@ import pandas as pd
 import yaml
 
 from src.utils.atomic_io import atomic_to_csv, atomic_write_text
+from src.utils.run_id import RUN_ID_RE, format_run_id, parse_run_id, validate_run_id
 
 # ------------------------------------------------------------------
 # Ensure "src" root is on sys.path so we can import agents package
@@ -83,10 +83,6 @@ SILVER_ROOT = os.path.join("artifacts", "silver")
 # Optional overrides (for tests / CI)
 BRONZE_ROOT = os.environ.get("BRONZE_ROOT", BRONZE_ROOT)
 SILVER_ROOT = os.environ.get("SILVER_ROOT", SILVER_ROOT)
-
-# Run-id pattern: YYYYMMDD_HHMMSS_#<hex>
-RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[0-9a-fA-F]{6,32})$")
-
 
 # -----------------------------
 # Helpers: time, paths, hashing
@@ -144,13 +140,9 @@ def find_latest_bronze_run_id() -> str:
 
 
 def make_silver_run_id_from_bronze(bronze_run_id: str, now: Optional[datetime] = None) -> str:
-    m = RUN_ID_RE.match(bronze_run_id)
-    if not m:
-        raise ValueError(f"Invalid bronze run id format: {bronze_run_id}")
-
-    suffix = m.group("suffix")
+    _, suffix = parse_run_id(bronze_run_id)
     now_dt = now or utc_now()
-    return f"{now_dt.strftime('%Y%m%d_%H%M%S')}_#{suffix}"
+    return format_run_id(now_dt.strftime("%Y%m%d_%H%M%S"), suffix)
 
 
 # -----------------------------
@@ -463,6 +455,7 @@ HTML_REPORT_TEMPLATE = """\
 def main() -> int:
     # bronze_run_id can be passed as CLI arg; otherwise latest bronze is used.
     bronze_run_id = sys.argv[1] if len(sys.argv) > 1 else find_latest_bronze_run_id()
+    validate_run_id(bronze_run_id)
 
     bronze_data_dir = os.path.join(BRONZE_ROOT, bronze_run_id, "data")
     if not os.path.exists(bronze_data_dir):
@@ -471,6 +464,7 @@ def main() -> int:
     # Build silver run_id (new timestamp + bronze suffix)
     start_dt = utc_now()
     silver_run_id = make_silver_run_id_from_bronze(bronze_run_id, now=start_dt)
+    validate_run_id(silver_run_id)
 
     # Create silver folders
     elt_dir = os.path.join(SILVER_ROOT, silver_run_id)

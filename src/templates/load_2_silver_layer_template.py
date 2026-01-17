@@ -53,6 +53,13 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import yaml
 
+# ------------------------------------------------------------------
+# Ensure repo root is on sys.path for src.* imports
+# ------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.utils.atomic_io import atomic_to_csv, atomic_write_text
 from src.utils.run_id import RUN_ID_RE, format_run_id, parse_run_id, validate_run_id
 

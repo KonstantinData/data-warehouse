@@ -485,8 +485,8 @@ def main() -> int:
     def log(msg: str) -> None:
         ts = iso_utc(utc_now())
         line = f"{ts} | {msg}"
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        existing = Path(log_file).read_text(encoding="utf-8") if os.path.exists(log_file) else ""
+        atomic_write_text(f"{existing}{line}\n", log_file)
         print(line)
 
     log(f"RUN_START run_id={silver_run_id}")

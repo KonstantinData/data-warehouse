@@ -146,6 +146,18 @@ def write_html_report(context: Dict[str, Any], path: str) -> None:
         f.write(html)
 
 
+def atomic_to_csv(df: pd.DataFrame, path: str, **to_csv_kwargs: Any) -> None:
+    target = Path(path)
+    tmp_path = target.with_name(f".{target.name}.tmp")
+    df.to_csv(tmp_path, **to_csv_kwargs)
+    with open(tmp_path, "rb") as f:
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_path, target)
+
+
 def find_latest_bronze_run_id() -> str:
     if not os.path.exists(BRONZE_ROOT):
         raise FileNotFoundError(f"Bronze root not found: {BRONZE_ROOT}")
@@ -601,7 +613,7 @@ def main() -> int:
 
             # Write
             t1 = time.perf_counter()
-            cleaned.to_csv(out_path, index=False)
+            atomic_to_csv(cleaned, out_path, index=False)
             rec["write_duration_s"] = time.perf_counter() - t1
 
             rec["out_sha256"] = sha256_file(out_path)

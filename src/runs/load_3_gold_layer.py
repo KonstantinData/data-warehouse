@@ -374,8 +374,19 @@ def load_csv(folder: Path, filename: str) -> Optional[pd.DataFrame]:
     return with_retry(lambda: pd.read_csv(p))
 
 
+def atomic_to_csv(df: pd.DataFrame, path: Path, **to_csv_kwargs: Any) -> None:
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    df.to_csv(tmp_path, **to_csv_kwargs)
+    with open(tmp_path, "rb") as f:
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_path, path)
+
+
 def write_csv(df: pd.DataFrame, path: Path) -> None:
-    with_retry(lambda: df.to_csv(path, index=False))
+    with_retry(lambda: atomic_to_csv(df, path, index=False))
 
 
 def format_output_path(path: Path, base: Path) -> str:

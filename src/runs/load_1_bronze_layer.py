@@ -192,25 +192,6 @@ def safe_stat_utc(path: str, stat_fn: Callable[[str], os.stat_result] = os.stat)
     }
 
 
-def write_yaml(data: Dict[str, Any], path: str) -> None:
-    """Serialize a dictionary to a YAML file."""
-
-    atomic_write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
-        path,
-    )
-
-
-def write_html_report(context: Dict[str, Any], path: str) -> None:
-    """Render and write the HTML report for the run."""
-
-    from jinja2 import Template
-
-    template = Template(HTML_REPORT_TEMPLATE)
-    html = template.render(**context)
-    atomic_write_text(html, path)
-
-
 def read_state(path: str) -> Dict[str, Any]:
     """Load the persisted ingestion state from disk.
 
@@ -227,7 +208,10 @@ def read_state(path: str) -> Dict[str, Any]:
 def write_state(path: str, payload: Dict[str, Any]) -> None:
     """Persist ingestion state to disk."""
 
-    write_yaml(payload, path)
+    atomic_write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        path,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -657,7 +641,10 @@ def run_bronze_load(
         "has_new_data": has_new_data,
     }
 
-    write_yaml(metadata, os.path.join(paths.data_dir, "metadata.yaml"))
+    atomic_write_text(
+        yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True),
+        os.path.join(paths.data_dir, "metadata.yaml"),
+    )
 
     report_ctx = {
         "run_id": run_id,
@@ -665,7 +652,11 @@ def run_bronze_load(
         "end_dt": iso_utc(end_dt),
         "results": results,
     }
-    write_html_report(report_ctx, os.path.join(paths.report_dir, "elt_report.html"))
+    from jinja2 import Template
+
+    template = Template(HTML_REPORT_TEMPLATE)
+    html = template.render(**report_ctx)
+    atomic_write_text(html, os.path.join(paths.report_dir, "elt_report.html"))
 
     if failed == 0:
         state_payload = {

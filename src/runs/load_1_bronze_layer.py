@@ -56,6 +56,10 @@ DEFAULT_RAW_ERP = os.environ.get("RAW_ERP", DEFAULT_RAW_ERP)
 DEFAULT_BRONZE_ROOT = os.environ.get("BRONZE_ROOT", DEFAULT_BRONZE_ROOT)
 
 
+def should_emit_stdout() -> bool:
+    return os.environ.get("PYTEST_CURRENT_TEST") is None
+
+
 HTML_REPORT_TEMPLATE = """\
 <html>
 <head><title>Bronze ELT Report - {{ run_id }}</title></head>
@@ -310,7 +314,8 @@ def create_logger(log_path: str, now_fn: Callable[[], datetime] = utc_now) -> Ca
 
     def log(msg: str) -> None:
         line = f"{iso_utc(now_fn())} | {msg}"
-        print(line)
+        if should_emit_stdout():
+            print(line)
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
@@ -697,7 +702,8 @@ def main() -> None:
         run_id=args.run_id,
     )
     output_payload = run_bronze_load(config)
-    print(json.dumps(output_payload))
+    if should_emit_stdout():
+        print(json.dumps(output_payload))
 
 
 if __name__ == "__main__":

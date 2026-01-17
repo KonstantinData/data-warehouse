@@ -89,6 +89,10 @@ SILVER_ROOT = os.path.join("artifacts", "silver")
 BRONZE_ROOT = os.environ.get("BRONZE_ROOT", BRONZE_ROOT)
 SILVER_ROOT = os.environ.get("SILVER_ROOT", SILVER_ROOT)
 
+# Avoid stdout noise during pytest runs.
+def should_emit_stdout() -> bool:
+    return os.environ.get("PYTEST_CURRENT_TEST") is None
+
 # Run-id pattern: YYYYMMDD_HHMMSS_#<hex>
 RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[0-9a-fA-F]{6,32})$")
 
@@ -506,7 +510,8 @@ def main() -> int:
         line = f"{ts} | {msg}"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(line + "\n")
-        print(line)
+        if should_emit_stdout():
+            print(line)
 
     log(f"RUN_START run_id={silver_run_id}")
     log(f"SOURCE bronze_run_id={bronze_run_id}")

@@ -24,6 +24,8 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import html
+import importlib.util
 import json
 import os
 import platform
@@ -546,6 +548,57 @@ def summarize_results(results: Iterable[Dict[str, Any]]) -> Tuple[int, int, int,
     return ok, skipped, failed, has_new_data
 
 
+def render_fallback_report(report_ctx: Dict[str, Any]) -> str:
+    """Render a minimal HTML report without external templating dependencies."""
+
+    rows = []
+    for rec in report_ctx.get("results", []):
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(rec.get('file', '')))}</td>"
+            f"<td>{html.escape(str(rec.get('source_system', '')))}</td>"
+            f"<td>{html.escape(str(rec.get('status', '')))}</td>"
+            f"<td>{html.escape(str(rec.get('rows', '')))}</td>"
+            f"<td>{html.escape(str(rec.get('read_duration_s') or 0))}</td>"
+            f"<td>{html.escape(str(rec.get('copy_duration_s') or 0))}</td>"
+            f"<td>{html.escape(str(rec.get('file_size_bytes') or ''))}</td>"
+            f"<td>{html.escape(str(rec.get('file_mtime_utc') or ''))}</td>"
+            f"<td style=\"font-family: monospace;\">{html.escape(str(rec.get('sha256') or ''))}</td>"
+            f"<td>{html.escape(str(rec.get('skip_reason') or ''))}</td>"
+            f"<td>{html.escape(str(rec.get('error_message') or ''))}</td>"
+            "</tr>"
+        )
+
+    return (
+        "<html><head><title>Bronze ELT Report - "
+        f"{html.escape(str(report_ctx.get('run_id', '')))}</title></head><body>"
+        "<h1>Bronze ELT Report</h1>"
+        f"<p>Run ID: {html.escape(str(report_ctx.get('run_id', '')))}</p>"
+        f"<p>Run start (UTC): {html.escape(str(report_ctx.get('start_dt', '')))}</p>"
+        f"<p>Run end (UTC): {html.escape(str(report_ctx.get('end_dt', '')))}</p>"
+        "<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\">"
+        "<tr>"
+        "<th>file</th><th>source</th><th>status</th><th>rows</th>"
+        "<th>read(s)</th><th>copy(s)</th><th>size(bytes)</th>"
+        "<th>mtime(UTC)</th><th>sha256</th><th>skip reason</th><th>error</th>"
+        "</tr>"
+        f"{''.join(rows)}"
+        "</table>"
+        "</body></html>"
+    )
+
+
+def render_html_report(report_ctx: Dict[str, Any]) -> str:
+    """Render the HTML report, falling back when Jinja2 is unavailable."""
+
+    if importlib.util.find_spec("jinja2") is None:
+        return render_fallback_report(report_ctx)
+    from jinja2 import Template
+
+    template = Template(HTML_REPORT_TEMPLATE)
+    return template.render(**report_ctx)
+
+
 # -----------------------------
 # Main
 # -----------------------------
@@ -652,10 +705,7 @@ def run_bronze_load(
         "end_dt": iso_utc(end_dt),
         "results": results,
     }
-    from jinja2 import Template
-
-    template = Template(HTML_REPORT_TEMPLATE)
-    html = template.render(**report_ctx)
+    html = render_html_report(report_ctx)
     atomic_write_text(html, os.path.join(paths.report_dir, "elt_report.html"))
 
     if failed == 0:

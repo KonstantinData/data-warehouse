@@ -26,18 +26,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from runs.load_summary_report import write_summary_report
+from utils.secrets import redact_text
 
 import yaml
 from dotenv import dotenv_values, load_dotenv
 
 RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[0-9a-fA-F]{6,32})$")
-SENSITIVE_ENV_KEYS = (
-    "OPENAI_API_KEY",
-    "OPEN_AI_KEY",
-    "AWS_SECRET_ACCESS_KEY",
-    "GCP_SECRET",
-    "AZURE_CLIENT_SECRET",
-)
 SKIP_LLMS_STEPS = ("silver draft", "silver builder", "gold draft", "gold builder")
 SILVER_STEPS = ("silver draft", "silver builder", "silver runner")
 GOLD_STEPS = ("gold draft", "gold builder", "gold runner")
@@ -120,15 +114,6 @@ def read_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def redact_sensitive_values(text: str, env: Dict[str, str]) -> str:
-    redacted = text
-    for key in SENSITIVE_ENV_KEYS:
-        value = env.get(key)
-        if value:
-            redacted = redacted.replace(value, "***REDACTED***")
-    return redacted
-
-
 def build_python_cmd(repo_root: Path, relative_path: Path, run_id: Optional[str] = None) -> List[str]:
     cmd = [sys.executable, str(repo_root / relative_path)]
     if run_id:
@@ -174,24 +159,31 @@ def run_subprocess_step(
     status = "success"
     details = None
     try:
-        with log_path.open("w", encoding="utf-8") as log_file:
-            result = runner(
-                cmd,
-                cwd=cwd,
-                env=env,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=timeout_s,
-            )
+        result = runner(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_s,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        log_path.write_text(redact_text(output, env), encoding="utf-8")
         return_code = result.returncode
         if result.returncode != 0:
             status = "failed"
             details = f"Command exited with code {result.returncode}" \
                 f" (see {log_path})"
+    except subprocess.TimeoutExpired as exc:
+        status = "failed"
+        output = (exc.stdout or "") + (exc.stderr or "")
+        if output:
+            log_path.write_text(redact_text(output, env), encoding="utf-8")
+        details = redact_text(f"Execution failed: {exc}", env)
     except Exception as exc:
         status = "failed"
-        details = redact_sensitive_values(f"Execution failed: {exc}", env)
+        details = redact_text(f"Execution failed: {exc}", env)
     ended = utc_now()
     return StepResult(
         name=name,

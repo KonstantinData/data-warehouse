@@ -1,5 +1,0 @@
-{"level":"INFO","message":"[BUILDER] REPO_ROOT=D:\Git-GitHub\Repositories\07-Portfolio\agentic-elt-data-warehouse"}
-{"level":"INFO","message":"[BUILDER] Using RUN_ID=20260117_101143_#72d1650f"}
-{"level":"INFO","message":"[BUILDER] Generating Silver script from LLM..."}
-{"level":"INFO","message":"HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK""}
-{"level":"INFO","message":"[BUILDER] Wrote load_2_silver_layer.py to: D:\Git-GitHub\Repositories\07-Portfolio\agentic-elt-data-warehouse\src\runs\load_2_silver_layer.py"}

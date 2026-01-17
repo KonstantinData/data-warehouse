@@ -296,7 +296,10 @@ def _infer_series_type(series: pd.Series) -> str:
     if detected_format:
         datetime_values = pd.to_datetime(cleaned, errors="coerce", format=detected_format)
     else:
-        datetime_values = pd.to_datetime(cleaned, errors="coerce")
+        try:
+            datetime_values = pd.to_datetime(cleaned, errors="coerce", format="mixed")
+        except (TypeError, ValueError):
+            datetime_values = pd.to_datetime(cleaned, errors="coerce", format="ISO8601")
     datetime_ratio = float(datetime_values.notna().mean())
 
     if numeric_ratio >= 0.9:

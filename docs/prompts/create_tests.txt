@@ -1,0 +1,251 @@
+TASK
+Adapt the existing test plan and implementation to the ORIGINAL repository contained in
+agentic-elt-data-warehouse-main.zip. Use the repo’s real runners, real env overrides, and
+real artifact layouts. Implement a “good professional” test standard: solid coverage and
+contracts, not minimal, not extreme.
+
+REPO FACTS (MUST MATCH)
+- Bronze runner: src/runs/load_1_bronze_layer.py
+  CLI flags:
+    --raw-crm <dir>
+    --raw-erp <dir>
+    --bronze-root <dir>
+    --run-id <optional>
+- Silver runner: src/runs/load_2_silver_layer.py
+  CLI: positional bronze_run_id (or auto-detect latest)
+  Uses env overrides:
+    BRONZE_ROOT, SILVER_ROOT
+  Writes:
+    SILVER_ROOT/<silver_run_id>/{data,reports}
+- Gold runner: src/runs/load_3_gold_layer.py
+  CLI: positional silver_run_id (or auto-detect latest), optional gold_run_id
+  Uses env overrides:
+    SILVER_ROOT (for locating silver), GOLD_ROOT_OVERRIDE (for output root)
+  Default gold output root is REPO_ROOT/artifacts/gold/marts, but tests MUST override.
+
+- Existing test folder exists but is placeholder: tests/README.md, tests/.gitkeep
+- pyproject.toml already contains [tool.pytest.ini_options] testpaths=["tests"] and strict markers.
+
+CONSTRAINTS
+- No external services (no DB, no cloud). Use local fixture CSVs only.
+- Tests MUST NOT write to repo artifacts/ or repo tmp/ at runtime.
+- All runtime outputs must go under pytest-provided tmp_path.
+- No web calls.
+- Keep suite runtime reasonable (< 60s typical).
+
+DELIVERABLES
+
+1) PYTEST CONFIG UPDATE (pyproject.toml)
+Update [tool.pytest.ini_options] to add markers and useful defaults:
+- add markers: unit, contract, e2e
+- extend addopts to include durations (keep strict markers):
+  addopts = "--strict-markers --tb=short --durations=10"
+Do not remove existing config; only extend.
+
+2) TEST DIRECTORY STANDARD (create these folders)
+tests/
+  unit/
+  contracts/
+  e2e/
+  fixtures/
+    raw/
+      source_crm/
+      source_erp/
+  helpers/
+    assertions.py
+    io.py
+  conftest.py
+
+3) FIXTURE DATA (CSV)
+Create minimal fixture CSVs under:
+- tests/fixtures/raw/source_crm/
+- tests/fixtures/raw/source_erp/
+Use realistic names that map to the pipeline:
+- For ERP include the files expected by gold (silver reads from bronze data):
+  sales_details.csv
+  prd_info.csv
+  PX_CAT_G1V2.csv
+- For CRM include:
+  cst_info.csv
+  CST_AZ12.csv
+  LOC_A101.csv
+Fixture rules:
+- 10–50 rows each, deterministic
+- Include at least: one primary/natural key, one date-like column, one numeric column
+- Include 1–2 edge cases: whitespace, empty string, mixed casing, one duplicate key candidate
+- Ensure Gold required columns exist (check REQUIRED_SCHEMAS in load_3_gold_layer.py and include those columns)
+
+4) TEST HELPERS
+Implement tests/helpers/assertions.py with:
+- assert_exists(path)
+- assert_nonempty_file(path)
+- assert_dir_contains_files(dir_path, filenames_set)
+- assert_yaml_has_fields(yaml_dict, dotted_field_paths_list)
+- assert_csv_has_columns(csv_path, required_cols_list)
+- assert_csv_rowcount_at_least(csv_path, n)
+- assert_csv_unique_on(csv_path, key_cols_list)  (simple uniqueness check)
+
+Implement tests/helpers/io.py with:
+- read_yaml(path) -> dict
+- read_csv_header(path) -> list[str]
+- read_csv_rows(path) -> list[dict] (use csv module)
+- copy_tree(src_dir, dst_dir)
+
+5) PYTEST FIXTURES (tests/conftest.py)
+Create fixtures:
+- repo_root() -> Path (resolve repo root from conftest location)
+- fixture_raw_root(repo_root) -> Path (tests/fixtures/raw)
+- prepared_raw_dirs(tmp_path, fixture_raw_root) -> (raw_crm_dir, raw_erp_dir)
+  Copy fixtures into:
+    tmp_path/raw/source_crm
+    tmp_path/raw/source_erp
+- artifact_roots(tmp_path) -> dict with:
+    bronze_root = tmp_path/artifacts/bronze
+    silver_root = tmp_path/artifacts/silver
+    gold_root   = tmp_path/artifacts/gold/marts
+- run_bronze(prepared_raw_dirs, artifact_roots, repo_root) -> bronze_run_id
+  Execute via subprocess:
+    sys.executable src/runs/load_1_bronze_layer.py
+      --raw-crm <tmp_raw_crm>
+      --raw-erp <tmp_raw_erp>
+      --bronze-root <tmp_bronze_root>
+  Parse run_id from created directory under tmp_bronze_root (latest lexicographic).
+- run_silver(bronze_run_id, artifact_roots, repo_root) -> silver_run_id
+  Execute via subprocess with env:
+    BRONZE_ROOT=<tmp_bronze_root>
+    SILVER_ROOT=<tmp_silver_root>
+  Command:
+    sys.executable src/runs/load_2_silver_layer.py <bronze_run_id>
+  Parse silver_run_id from created directory under tmp_silver_root (latest).
+- run_gold(silver_run_id, artifact_roots, repo_root) -> gold_run_id
+  Execute via subprocess with env:
+    SILVER_ROOT=<tmp_silver_root>
+    GOLD_ROOT_OVERRIDE=<tmp_gold_root>
+  Command:
+    sys.executable src/runs/load_3_gold_layer.py <silver_run_id>
+  Parse gold_run_id from created directory under tmp_gold_root (latest).
+
+Subprocess requirements:
+- capture stdout/stderr; on failure include them in assertion message
+- ensure cwd=repo_root so relative imports and paths behave like real runs
+
+6) UNIT TESTS (FAST)
+Create at least 8–12 unit tests targeting functions already present in runners:
+- Bronze:
+  - build_run_id(None, dt) produces expected format with "_#"
+  - detect_changed logic returns True/False based on mtime/sha changes
+  - sha256_file returns stable hash for known content (use tmp_path file)
+- Silver:
+  - RUN_ID_RE matches valid ids, rejects invalid
+  - make_silver_run_id_from_bronze copies suffix
+  - base_silver_cleaning trims and converts "" to NA
+- Gold:
+  - RUN_ID_RE validation (if present in file) or make_gold_run_id_from_silver copies suffix
+  - validate_required_columns returns missing list correctly
+  - int_to_date conversion works for YYYYMMDD, handles invalid
+
+Import functions directly from src/runs modules (do NOT execute as scripts for unit tests).
+
+7) CONTRACT / DATA QUALITY TESTS
+Create 3 contract tests that run the pipeline into tmp_path and assert invariants:
+
+A) tests/contracts/test_bronze_contracts.py
+- Run bronze
+- Assert structure:
+  <bronze_root>/<bronze_run_id>/data exists
+  <bronze_root>/<bronze_run_id>/reports exists
+- Assert required files exist:
+  data/metadata.yaml
+  data/run_log.txt
+  reports/elt_report.html
+- Assert metadata fields exist (dotted paths):
+  run.run_id
+  run.layer
+  run.pipeline
+  run.started_utc
+  sources.crm_files
+  sources.erp_files
+- Assert each fixture CSV is copied byte-for-byte into data/ (same filename exists)
+
+B) tests/contracts/test_silver_contracts.py
+- Run bronze then silver (with env overrides)
+- Assert silver output structure:
+  <silver_root>/<silver_run_id>/data exists
+  data/metadata.yaml
+  data/run_log.txt
+  reports/elt_report.html
+- Assert 1:1 parity:
+  For each input CSV in bronze data (excluding metadata.yaml and run_log.txt),
+  a corresponding CSV exists in silver data.
+- Assert standardized cleaning effect:
+  Pick one fixture cell with leading/trailing whitespace in input; verify silver output is trimmed
+  (use pandas or csv module for a single check only; keep lightweight)
+
+C) tests/contracts/test_gold_contracts.py
+- Run bronze -> silver -> gold (with env overrides)
+- Assert gold output under:
+  <gold_root>/<gold_run_id>/
+    data/ exists
+    reports/ exists (if created)
+    run_log.txt exists at gold_dir/run_log.txt
+- Assert required marts exist in gold data:
+  gold_dim_customer.csv
+  gold_dim_product.csv
+  gold_fact_sales.csv
+  gold_mart_kpis.csv
+  (If repo’s gold builder produces different filenames, match actual outputs from load_3_gold_layer.py)
+- Assert basic DQ:
+  - Uniqueness: gold_dim_customer unique on cst_key (or the actual key column produced)
+  - Referential integrity: gold_fact_sales product/customer keys exist in corresponding dims
+  Use simple CSV-level checks (do not over-engineer).
+
+8) E2E TESTS (2–3 TESTS)
+Create in tests/e2e/:
+
+A) test_e2e_happy_path.py
+- Run bronze -> silver -> gold
+- Assert all three run_ids created
+- Assert key artifacts exist as above
+- Assert rowcounts >= 1 for each gold output CSV
+
+B) test_e2e_rerun_bronze_idempotency.py
+- Run bronze twice on same inputs into same tmp bronze_root
+- Assert run_id differs
+- Assert copied CSV filenames set is identical
+- Assert metadata.yaml exists in both and includes run.run_id matching directory name
+
+C) Optional: test_e2e_incremental_skip_unchanged.py (only if stable)
+Bronze maintains state in <bronze_root>/_state/last_ingested.yaml.
+- Run bronze once
+- Run bronze again with identical inputs and same bronze_root
+- Verify that per-file statuses in run report/log indicate SKIPPED for unchanged files OR
+  verify metadata tables entries include status SKIPPED (use what bronze actually writes).
+If bronze does not expose status easily, omit this test.
+
+9) DEPENDENCIES
+The repo already lists pytest in optional dev deps in pyproject.toml.
+Do NOT introduce a new dependency manager.
+If requirements.txt is used for local installs, add:
+- pytest
+- pytest-cov
+ONLY if they are not already installed by the project’s standard workflow.
+Otherwise document using:
+  pip install ".[dev]"
+in tests/README.md.
+
+10) DOCUMENTATION
+Update tests/README.md to include:
+- install dev deps (pip install ".[dev]")
+- run all tests: pytest
+- run by markers:
+  pytest -m unit
+  pytest -m contract
+  pytest -m e2e
+- note that tests use tmp_path and do not write to repo artifacts/
+
+ACCEPTANCE CRITERIA
+- From repo root, `pytest` passes
+- Tests create outputs only in pytest tmp directories
+- Unit + contract + e2e categories exist with markers registered
+- E2E executes real runners using correct CLI/env overrides and validates outputs
+- No untracked artifacts appear under repo artifacts/ or repo tmp/ after tests

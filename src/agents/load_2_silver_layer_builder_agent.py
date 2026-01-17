@@ -16,7 +16,6 @@ from __future__ import annotations
 import ast
 import json
 import logging
-import os
 import sys
 from hashlib import sha256
 from pathlib import Path
@@ -25,6 +24,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.utils.secrets import get_required_secret, redact_dict, redact_text
 
 # -------------------------------------------------------------
 # Helpers
@@ -74,9 +74,7 @@ def setup_logging() -> logging.Logger:
 def build_llm_client() -> OpenAI:
     """Build the OpenAI client using environment variables."""
     load_dotenv()
-    api_key = os.getenv("OPEN_AI_KEY") or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Missing OPEN_AI_KEY / OPENAI_API_KEY")
+    api_key = get_required_secret("OPEN_AI_KEY", "OPENAI_API_KEY")
     return OpenAI(api_key=api_key)
 
 

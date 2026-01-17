@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +33,7 @@ import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.utils.secrets import get_required_secret, redact_dict, redact_text
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------
@@ -208,16 +208,13 @@ D. Segmentation & Clustering for ML
 # --------------------------------------------------------------------
 def _build_openai_client() -> OpenAI:
     load_dotenv()
-
-    api_key = (
-        os.getenv("OPEN_AI_KEY")
-        or os.getenv("OPENAI_API_KEY")
-    )
-    if not api_key:
+    try:
+        api_key = get_required_secret("OPEN_AI_KEY", "OPENAI_API_KEY")
+    except RuntimeError as exc:
         raise RuntimeError(
             "No OPEN_AI_KEY or OPENAI_API_KEY found in environment/.env "
             "- cannot call OpenAI LLM."
-        )
+        ) from exc
 
     api_key = api_key.strip()
     if len(api_key) < 20:
@@ -583,8 +580,9 @@ def run_report_agent(
     human_report_md = human_resp.choices[0].message.content or ""
 
     human_report_path = output_dir / "silver_run_human_report.md"
+    redacted_report = redact_text(f"{human_report_md}\n\n{profile_md}")
     human_report_path.write_text(
-        f"{human_report_md}\n\n{profile_md}",
+        redacted_report,
         encoding="utf-8",
     )
     logger.info("Wrote human-readable report: %s", human_report_path)
@@ -627,7 +625,7 @@ def run_report_agent(
 
     json_out_path = output_dir / "silver_run_agent_context.json"
     json_out_path.write_text(
-        json.dumps(json_data, indent=2, ensure_ascii=False),
+        json.dumps(redact_dict(json_data), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     logger.info("Wrote agent context JSON: %s", json_out_path)

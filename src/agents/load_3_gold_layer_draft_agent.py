@@ -35,6 +35,10 @@ import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.utils.run_id import RUN_ID_RE, parse_run_id, validate_run_id as validate_run_id_strict
 from src.utils.secrets import (
     SENSITIVE_ENV_KEYS,

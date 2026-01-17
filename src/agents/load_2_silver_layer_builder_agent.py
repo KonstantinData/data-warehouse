@@ -24,6 +24,10 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from openai import OpenAI
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.utils.run_id import validate_run_id
 from src.utils.secrets import get_required_secret, redact_dict, redact_text
 

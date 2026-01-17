@@ -236,6 +236,10 @@ SILVER_ROOT = resolve_silver_root(REPO_ROOT)
 GOLD_ROOT = Path(os.environ.get("GOLD_ROOT_OVERRIDE", str(REPO_ROOT / "artifacts" / "gold" / "marts"))).expanduser()
 
 
+def should_emit_stdout() -> bool:
+    return os.environ.get("PYTEST_CURRENT_TEST") is None
+
+
 # -----------------------------
 # IO helpers
 # -----------------------------
@@ -271,7 +275,8 @@ def build_logger(log_path: Path) -> logging.Logger:
 
 def log_event(logger: logging.Logger, event: str, message: str, context: Optional[Dict[str, Any]] = None) -> None:
     logger.info(message, extra={"event": event, "context": context or {}})
-    print(f"{iso_utc(utc_now())} | {event} | {message}")
+    if should_emit_stdout():
+        print(f"{iso_utc(utc_now())} | {event} | {message}")
 
 
 def with_retry(action: Callable[[], Any], *, attempts: int = MAX_IO_ATTEMPTS, backoff_s: float = IO_BACKOFF_S) -> Any:

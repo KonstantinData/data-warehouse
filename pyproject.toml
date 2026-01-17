@@ -92,5 +92,10 @@ skip = [
 # -----------------------------------------------------
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "--strict-markers --tb=short"
+addopts = "--strict-markers --tb=short --durations=10"
 testpaths = ["tests"]
+markers = [
+  "unit: fast, isolated unit tests",
+  "contract: data and output contracts for pipeline layers",
+  "e2e: end-to-end pipeline tests",
+]

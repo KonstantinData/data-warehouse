@@ -1,0 +1,12 @@
+cst_id,cst_key,cst_firstname,cst_lastname,cst_marital_status,cst_gndr,cst_create_date
+1,CUST-0001,  Alice ,Smith,Single,f,2023-01-05
+2,CUST-0002,Bob,,Married,M,2023-02-10
+3,CUST-0003,Cara,Doe,Single,F,2023-03-15
+4,CUST-0004,Dan,Lee,Married,m,2023-04-20
+5,CUST-0005,Eve,Stone,Single,F,2023-05-25
+6,CUST-0006,Frank,Mills,Married,M,2023-06-30
+7,CUST-0007,Grace,Hill,Single,F,2023-07-04
+8,CUST-0008,Hank,Ivy,Married,M,2023-08-08
+9,CUST-0009,Iris,King,Single,F,2023-09-12
+10,CUST-0010,Jack,Nash,Single,M,2023-10-15
+3,CUST-0003,Cara,Doe,Single,F,2023-03-15

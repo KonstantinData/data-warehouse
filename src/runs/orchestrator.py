@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 import time
@@ -26,12 +25,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from runs.load_summary_report import write_summary_report
+from src.utils.run_id import RUN_ID_RE, format_run_id, validate_run_id
 from utils.secrets import redact_text
 
 import yaml
 from dotenv import dotenv_values, load_dotenv
 
-RUN_ID_RE = re.compile(r"^(?P<ts>\d{8}_\d{6})_#(?P<suffix>[0-9a-fA-F]{6,32})$")
 SKIP_LLMS_STEPS = ("silver draft", "silver builder", "gold draft", "gold builder")
 SILVER_STEPS = ("silver draft", "silver builder", "silver runner")
 GOLD_STEPS = ("gold draft", "gold builder", "gold runner")
@@ -97,7 +96,7 @@ def validate_raw_sources(repo_root: Path) -> None:
 def generate_run_id() -> str:
     stamp = utc_now().strftime("%Y%m%d_%H%M%S")
     suffix = uuid.uuid4().hex[:8]
-    return f"{stamp}_#{suffix}"
+    return format_run_id(stamp, suffix)
 
 
 def find_latest_run_id(root: Path) -> str:
@@ -106,7 +105,9 @@ def find_latest_run_id(root: Path) -> str:
     run_ids = [p.name for p in root.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)]
     if not run_ids:
         raise FileNotFoundError(f"No runs found in {root}")
-    return sorted(run_ids)[-1]
+    run_id = sorted(run_ids)[-1]
+    validate_run_id(run_id)
+    return run_id
 
 
 def read_yaml(path: Path) -> Dict[str, Any]:
@@ -264,6 +265,7 @@ def main() -> int:
     validate_raw_sources(repo_root)
 
     orchestrator_run_id = generate_run_id()
+    validate_run_id(orchestrator_run_id)
     started = utc_now()
 
     output_root = repo_root / "artifacts" / "orchestrator" / orchestrator_run_id

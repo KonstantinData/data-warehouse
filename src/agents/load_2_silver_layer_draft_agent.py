@@ -33,6 +33,7 @@ import yaml
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from src.utils.run_id import validate_run_id
 from src.utils.secrets import get_required_secret, redact_dict, redact_text
 logger = logging.getLogger(__name__)
 
@@ -487,6 +488,7 @@ def run_report_agent(
       - silver_run_agent_context.json
     """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    validate_run_id(run_id)
     logger.info("Starting Silver draft report generation. run_id=%s", run_id)
     start_time = time.monotonic()
 
@@ -636,7 +638,7 @@ def run_report_agent(
 # Optional: manual test
 if __name__ == "__main__":
     # Example call (adjust paths or read from args as needed)
-    example_run_id = "TEST_000000_#abcdef"
+    example_run_id = "test_000000_#abcdef"
 
     run_report_agent(
         run_id=example_run_id,

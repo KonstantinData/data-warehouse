@@ -1,0 +1,20 @@
+2026-01-17T17:27:53.593845Z | RUN_START run_id=20260117_172753_#7a02852b
+2026-01-17T17:27:53.600184Z | SOURCE bronze_run_id=20260117_172429_#7a02852b
+2026-01-17T17:27:53.614718Z | CONFIG BRONZE_ROOT=artifacts\bronze SILVER_ROOT=artifacts\silver
+2026-01-17T17:27:53.810743Z | SUCCESS file=CST_AZ12.csv rows_in=18484 rows_out=18484 read=0.010s write=0.020s
+2026-01-17T17:27:53.889248Z | SUCCESS file=LOC_A101.csv rows_in=18484 rows_out=18484 read=0.007s write=0.010s
+2026-01-17T17:27:53.910970Z | SUCCESS file=PX_CAT_G1V2.csv rows_in=37 rows_out=37 read=0.001s write=0.002s
+2026-01-17T17:27:54.034571Z | SUCCESS file=cst_info.csv rows_in=18494 rows_out=18494 read=0.011s write=0.023s
+2026-01-17T17:27:54.073683Z | SUCCESS file=prd_info.csv rows_in=397 rows_out=397 read=0.002s write=0.003s
+2026-01-17T17:27:54.410131Z | SUCCESS file=sales_details.csv rows_in=60398 rows_out=60398 read=0.031s write=0.109s
+2026-01-17T17:27:54.450249Z | CALL agents.load_2_report_agent.run_report_agent ...
+2026-01-17T17:28:49.981390Z | load_2_report_agent finished successfully.
+2026-01-17T17:28:49.993570Z | RUN_END run_id=20260117_172753_#7a02852b duration_s=0.829 success=6 failed=0
+2026-01-17T17:28:50.002569Z | OUTPUT=artifacts\silver\20260117_172753_#7a02852b
+2026-01-17 18:27:54,465 INFO Starting Silver draft report generation. run_id=20260117_172429_#7a02852b
+2026-01-17 18:27:54,652 INFO Profiling Bronze run artifacts.
+2026-01-17 18:27:56,693 INFO Requesting human-readable report from OpenAI.
+2026-01-17 18:28:49,748 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-17 18:28:49,979 INFO Wrote human-readable report: tmp\draft_reports\silver\20260117_172429_#7a02852b\silver_run_human_report.md
+2026-01-17 18:28:49,981 INFO Wrote agent context JSON: tmp\draft_reports\silver\20260117_172429_#7a02852b\silver_run_agent_context.json
+2026-01-17 18:28:49,981 INFO Completed Silver draft report generation in 55.52s.
